@@ -134,7 +134,6 @@ exclude = '(^|/)\.venv/'
 # pytest
 # --------------------------------------------------------------------------
 [tool.pytest.ini_options]
-testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
     "network: тест ходит в интернет (по умолчанию запускается отдельно)",

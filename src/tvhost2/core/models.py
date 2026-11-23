@@ -127,6 +127,14 @@ class Stream:
     headers: dict[str, str] = field(default_factory=dict)
     duration_s: int = 0
     is_live: bool = False
+    audio_tracks: tuple[dict[str, str], ...] = ()
+    """Список озвучек (Kodik, кинотеатры): [{"id","title","hash","type"}].
+
+    У Kodik каждая озвучка — отдельный поток со своим hash, поэтому
+    переключение озвучки = повторный разбор, а не смена дорожки в плеере.
+    Пустой кортеж — у источника одна дорожка.
+    """
+
     audio_url: str = ""
     """Отдельная аудио-дорожка. Для HLS — URI аудиогруппы master-плейлиста.
 

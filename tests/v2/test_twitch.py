@@ -345,9 +345,10 @@ class TestOfflineChannel:
 
 
 class TestRegistry:
-    def test_order_is_rutube_vk_youtube_twitch(self) -> None:
+    def test_order(self) -> None:
+        """Twitch идёт после Kodik: ссылки не пересекаются, порядок стабилен."""
         register_all()
-        assert registry.names()[:4] == ["Rutube", "VK Видео", "YouTube", "Twitch"]
+        assert registry.names()[:5] == ["Rutube", "VK Видео", "YouTube", "Kodik", "Twitch"]
 
     def test_finds_twitch(self) -> None:
         register_all()
