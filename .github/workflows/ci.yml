@@ -61,9 +61,12 @@ jobs:
           python-version: "3.12"
 
       - name: SAST — статический анализ (bandit через ruff)
+        # --select на командной строке перекрывает ignore из pyproject.toml,
+        # поэтому осознанные исключения (S101 — проверки в __main__, S104/S310/S603 — ADR-0002)
+        # передаются здесь же, иначе шаг краснеет на них.
         run: |
           pip install ruff
-          ruff check src --select S
+          ruff check src --select S --ignore S101,S104,S310,S603
 
       - name: SCA — уязвимости зависимостей
         run: |
@@ -96,4 +99,5 @@ jobs:
         run: |
           python -m tvhost.proxy --port 9000 &
           sleep 8
-          python -m pytest tests/test_integration.py -q -m network
+          # -m network выбирает тесты, помеченные как сетевые, из всего набора
+          python -m pytest tests/ -q -m network
