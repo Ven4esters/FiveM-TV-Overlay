@@ -443,7 +443,7 @@ class ProxyController:
             log = self.LOG_PATH.open("a", encoding="utf-8")
             log.write(
                 f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} "
-                f"запуск proxy.py на порту {port} =====\n"
+                f"запуск прокси (tvhost.proxy) на порту {port} =====\n"
             )
             log.flush()
             # Принудительный UTF-8 для дочернего процесса: на русской Windows
@@ -452,8 +452,13 @@ class ProxyController:
             env["PYTHONIOENCODING"] = "utf-8"
             env["PYTHONUTF8"] = "1"
             env.setdefault("PYTHONUNBUFFERED", "1")
+            # Запускаем прокси как модуль пакета (-m), а не файлом:
+            # proxy.py в корне больше нет, он лежит в src/tvhost/.
+            env["PYTHONPATH"] = os.pathsep.join(
+                [str(BASE_DIR / "src"), env.get("PYTHONPATH", "")]
+            ).strip(os.pathsep)
             self.proc = subprocess.Popen(
-                [sys.executable, "-u", str(BASE_DIR / "proxy.py"), "--port", str(port)],
+                [sys.executable, "-u", "-m", "tvhost.proxy", "--port", str(port)],
                 cwd=str(BASE_DIR),
                 stdout=log,
                 stderr=subprocess.STDOUT,
