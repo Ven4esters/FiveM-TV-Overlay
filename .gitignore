@@ -41,3 +41,7 @@ desktop.ini
 .env
 *.token
 diag.log
+
+# журналы
+*.log
+diag.log
