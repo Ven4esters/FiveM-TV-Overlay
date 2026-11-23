@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any
 
 
 class StreamKind(str, Enum):
@@ -127,7 +128,7 @@ class Stream:
     headers: dict[str, str] = field(default_factory=dict)
     duration_s: int = 0
     is_live: bool = False
-    audio_tracks: tuple[dict[str, str], ...] = ()
+    audio_tracks: tuple[dict[str, Any], ...] = ()
     """Список озвучек (Kodik, кинотеатры): [{"id","title","hash","type"}].
 
     У Kodik каждая озвучка — отдельный поток со своим hash, поэтому

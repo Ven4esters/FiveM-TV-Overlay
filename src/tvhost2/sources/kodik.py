@@ -258,7 +258,7 @@ def fetch_links(ref: KodikRef) -> dict[str, list[dict[str, Any]]]:
     return decoded
 
 
-def fetch_audio_tracks(ref: KodikRef, translations: list[dict[str, str]]) -> list[dict[str, Any]]:
+def fetch_audio_tracks(ref: KodikRef, translations: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Получить ссылки для каждой озвучки.
 
     У Kodik каждая озвучка — отдельный плеер со своим `hash`, поэтому
@@ -286,7 +286,7 @@ def fetch_audio_tracks(ref: KodikRef, translations: list[dict[str, str]]) -> lis
     return tracks
 
 
-def parse_translations(html: str) -> list[dict[str, str]]:
+def parse_translations(html: str) -> list[dict[str, Any]]:
     """Достать список озвучек из HTML плеера.
 
     Реальная разметка Kodik (проверено 23.11.2026) — `<option>` внутри
@@ -299,7 +299,7 @@ def parse_translations(html: str) -> list[dict[str, str]]:
     Каждая озвучка — отдельный поток со своим hash, поэтому переключение
     озвучки требует повторного запроса /ftor с этим hash.
     """
-    found: list[dict[str, str]] = []
+    found: list[dict[str, Any]] = []
     option_re = re.compile(
         r"<option\b(?P<attrs>[^>]*)>(?P<text>[^<]*)</option>", re.IGNORECASE | re.DOTALL
     )
@@ -392,7 +392,7 @@ class KodikSource:
             kind=StreamKind.HLS,
             qualities=sort_qualities(qualities),
             state=self.state,
-            audio_tracks=translations,
+            audio_tracks=tuple(translations),
         )
 
 

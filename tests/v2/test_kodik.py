@@ -9,14 +9,11 @@
 
 from __future__ import annotations
 
-import base64
-
 import pytest
 
 from tvhost2.core import SourceState, StreamKind, registry
 from tvhost2.sources import KodikSource, register_all
 from tvhost2.sources.kodik import (
-    KodikRef,
     decrypt_link,
     first_url,
     page_signatures,
@@ -30,7 +27,8 @@ REAL_ENCODED = (
     "iPZ0kPU6Tg9eUBQck29aj2ZrHO4cG29bT3UdjA9pANQeG0pVVsf5WExqZhsfEsZRlEUgWFVqUtRy"
     "Esk0lDsgWFZUU1H6EtpSUEVPmPHHD1R6BPxDms1PABDWUts0BNlDVM5PDFZWZ1N4EFsfiM5FBFxU"
     "D00hBsZrVM0gZFlWmsxbBsMdWBRsUBI0GuUeUuHsGuG3VEQ0U2Q3UhttVENrWBRrGhIfGrChHBo1U"
-    "2HtUuRuHORsUERuUBChV2M1HuQfGrtsVBwgULQ2UBMgVLIhThU2UK5bkLY6iOfhWu1pjutuHFV0Tu0hlBo"
+    "2HtUuRuHORsUERuUBChV2M1HuQfGrtsVBwgULQ2UBMgVLIhThU2UK5bkLY6iOfhWu1pjutuHFV0Tu0"
+    "hlBo"
 )
 
 # Настоящий фрагмент HTML плеера: озвучки лежат в <option data-media-hash>.
@@ -45,10 +43,12 @@ REAL_OPTIONS_HTML = """
             data-media-type="seria" data-title="AnimeVost">AnimeVost</option>
     <option value="729" data-id="729" data-translation-type="voice"
             data-media-id="1420137" data-media-hash="746cbbd95c6ac9b2bd8c113953f63646"
-            data-media-type="seria" data-title="СВ-Дубль" selected="selected">СВ-Дубль</option>
+            data-media-type="seria" data-title="СВ-Дубль"
+            selected="selected">СВ-Дубль</option>
     <option value="1968" data-id="1968" data-translation-type="subtitles"
             data-media-id="1044820" data-media-hash="abc123def456abc123def456abc123de"
-            data-media-type="seria" data-title="Light Family.Subtitles">Light Family.Subtitles</option>
+            data-media-type="seria" data-title="Light Family.Subtitles"
+            >Light Family.Subtitles</option>
   </select>
 </div>
 """
