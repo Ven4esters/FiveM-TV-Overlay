@@ -148,3 +148,91 @@ class TestEs5Compatibility:
     def test_no_template_literals_in_script(self, page):
         script = page[page.index("<script>") :]
         assert "`" not in script
+
+
+class TestAutoplayFallback:
+    """
+    CEF в GTA 5 может отклонить play() со звуком — это не «жест пользователя».
+
+    Приём из receml/player: повторяем запуск БЕЗ ЗВУКА. Немое видео лучше
+    чёрного экрана, а звук вернёт первый клик или команда volume с пульта.
+    """
+
+    @pytest.fixture()
+    def page(self, session):
+        return player.render_player(session.sid, session, "http://127.0.0.1:9000")
+
+    def test_play_failure_is_retried_muted(self, page):
+        assert "function startPlayback" in page
+        # внутри обработчика отказа звук выключается и запуск повторяется
+        i = page.index("function startPlayback")
+        body = page[i : i + 900]
+        assert "v.muted = true" in body
+        assert "v.play()" in body
+
+    def test_click_restores_sound(self, page):
+        i = page.index("function startPlayback")
+        assert 'addEventListener("click"' in page[i : i + 900]
+
+    def test_muted_mode_does_not_loop_forever(self, page):
+        # повторная попытка допускается только ОДИН раз, иначе бесконечный цикл
+        i = page.index("function startPlayback")
+        body = page[i : i + 900]
+        assert body.count("v.play()") == 2
+
+    def test_bigplay_button_clears_forced_mute(self, page):
+        i = page.index('bigplay.addEventListener("click"')
+        assert "unmuteOnClick" in page[i : i + 400]
+
+    def test_startup_uses_start_playback(self, page):
+        i = page.index("// Стартуем сразу")
+        assert "startPlayback()" in page[i : i + 300]
+
+
+class TestErrorVisibility:
+    """
+    Ошибка потока не должна исчезать через 1.1 с: иначе пользователь видит
+    секунду текста, потом чёрный экран — и не знает, ждать или нажимать.
+    """
+
+    @pytest.fixture()
+    def page(self, session):
+        return player.render_player(session.sid, session, "http://127.0.0.1:9000")
+
+    def test_show_error_exists(self, page):
+        assert "function showError" in page
+
+    def test_error_is_pinned_not_autohidden(self, page):
+        # вырезаем ИМЕННО тело функции, иначе окно захватывает соседний showUI
+        i = page.index("function showError")
+        body = page[i : page.index("\n  }", i)]
+        # закрепление: таймер обнуляется вместо установки нового
+        assert "toastTimer = null" in body
+        assert "= setTimeout(" not in body
+
+    def test_fatal_errors_use_show_error(self, page):
+        assert 'showError("Поток: "' in page
+
+    def test_error_cleared_on_play(self, page):
+        i = page.index('v.addEventListener("play"')
+        assert "toastTimer === null" in page[i : i + 400]
+
+
+class TestSubtitleStyling:
+    """Субтитры по умолчанию ~5% высоты — с дивана не читаются."""
+
+    @pytest.fixture()
+    def page(self, session):
+        return player.render_player(session.sid, session, "http://127.0.0.1:9000")
+
+    def test_cue_style_enlarges_subtitles(self, page):
+        assert "video::cue" in page
+
+    def test_cue_uses_large_font(self, page):
+        i = page.index("video::cue")
+        rule = page[i : i + 120]
+        assert "font-size:150%" in rule
+
+    def test_cue_has_backdrop(self, page):
+        i = page.index("video::cue")
+        assert "background:rgba(0,0,0,.6)" in page[i : i + 120]

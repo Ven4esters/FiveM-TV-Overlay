@@ -231,6 +231,10 @@ PLAYER_HTML = r"""<!doctype html>
                font-family: system-ui, "Segoe UI", Roboto, sans-serif; color:#fff; }
   #stage { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
   video { width:100%; height:100%; background:#000; object-fit:contain; }
+  /* Субтитры: размер по умолчанию (~5% высоты) не читается с дивана.
+     150% и подложка — приём из receml/player. Псевдоэлемент понимают
+     и старый CEF, и современные браузеры. */
+  video::cue { font-size:150%; color:#fff; background:rgba(0,0,0,.6); }
 
   /* Кнопка запуска поверх всего — CEF может блокировать autoplay */
   #bigplay {
@@ -504,7 +508,7 @@ select.pick:focus { outline: 2px solid #4d8dff; }
       var reason = data.details || ("HLS-ошибка " + (data.type || ""));
       if (reason === lastErr) return;
       lastErr = reason;
-      toast("Поток: " + reason);
+      showError("Поток: " + reason);
       try {
         fetch(BASE + "/report/" + SID, {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -616,6 +620,16 @@ select.pick:focus { outline: 2px solid #4d8dff; }
     clearTimeout(toastTimer);
     toastTimer = setTimeout(function () { toastEl.classList.remove("show"); }, 1100);
   }
+
+  // Ошибка потока держится на экране, пока воспроизведение не наладится.
+  // Иначе беда выглядит так: секунду был текст, потом чёрный экран —
+  // и непонятно, то ли ждать, то ли что-то нажимать.
+  function showError(text) {
+    toastEl.textContent = text;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = null;      // null = сообщение закреплено, само не исчезнет
+  }
   function showUI(forceClean) {
     ui.classList.remove("hide");
     if (forceClean === true) { document.body.classList.remove("clean"); }
@@ -655,7 +669,38 @@ select.pick:focus { outline: 2px solid #4d8dff; }
   }
 
   // ---------- команды ----------
-  function doPlay()  { v.play().catch(function () { toast("Нажмите на экран"); }); }
+
+  // Запуск с обходом блокировки автоплея (приём из receml/player).
+  //
+  // CEF в GTA 5 не считает нажатие на пульте оверлея «жестом пользователя»
+  // для страницы, поэтому play() со звуком может быть отклонён. Тогда
+  // пробуем ещё раз БЕЗ ЗВУКА: немое видео лучше чёрного экрана.
+  // Звук вернёт первый клик по странице либо команда volume с пульта.
+  var unmuteOnClick = false;   // ждём клик, чтобы вернуть звук
+
+  function startPlayback() {
+    var p = v.play();
+    if (!p || !p.catch) return;
+    p.catch(function () {
+      if (v.muted) { bigplay.style.display = "flex"; return; }
+      v.muted = true;
+      if (!unmuteOnClick) {
+        unmuteOnClick = true;
+        document.addEventListener("click", function unmuteOnce() {
+          document.removeEventListener("click", unmuteOnce);
+          unmuteOnClick = false;
+          v.muted = false;
+        });
+      }
+      var p2 = v.play();
+      if (p2 && p2.catch) p2.catch(function () {
+        bigplay.style.display = "flex";
+        toast("Нажмите на экран");
+      });
+    });
+  }
+
+  function doPlay()  { startPlayback(); }
   function doPause() { v.pause(); }
   function doToggle(){ if (v.paused) doPlay(); else doPause(); }
 
@@ -725,6 +770,9 @@ select.pick:focus { outline: 2px solid #4d8dff; }
   // ---------- интерфейс ----------
   bigplay.addEventListener("click", function () {
     bigplay.style.display = "none";
+    // Настоящий жест пользователя: если звук выключили МЫ ради автозапуска,
+    // возвращаем его. Если пользователь выключил сам — не трогаем.
+    if (unmuteOnClick) { unmuteOnClick = false; v.muted = false; }
     doPlay();
     showUI();
   });
@@ -762,6 +810,9 @@ select.pick:focus { outline: 2px solid #4d8dff; }
   v.addEventListener("play", function () {
     bPlay.textContent = "⏸";
     bigplay.style.display = "none";
+    // Пошло воспроизведение — снимаем закреплённое сообщение об ошибке.
+    // toastTimer === null значит «закреплено» (см. showError).
+    if (toastTimer === null) toastEl.classList.remove("show");
     showUI(); report();
   });
   v.addEventListener("pause", function () {
@@ -863,7 +914,10 @@ select.pick:focus { outline: 2px solid #4d8dff; }
   window.__player = {
     get hls() { return hlsInstance; },
     get levels() { return levels; },
-    get quality() { return currentQualityName(); }
+    get quality() { return currentQualityName(); },
+    // Для диагностики в игре и для автотеста: показать/снять ошибку
+    showError: function (t) { showError(String(t)); },
+    hideError: function () { toastEl.classList.remove("show"); }
   };
 
   // ---------- старт ----------
@@ -952,7 +1006,7 @@ select.pick:focus { outline: 2px solid #4d8dff; }
         } catch (e) {}
       }
       if (!data.fatal) return;
-      toast("Поток: " + reason);
+      showError("Поток: " + reason);
       // одна попытка восстановления
       if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
         setTimeout(function () { try { hls.startLoad(); } catch (e) {} }, 1500);
@@ -971,9 +1025,9 @@ select.pick:focus { outline: 2px solid #4d8dff; }
     tr.src = "__SUB__"; tr.default = false;
     v.appendChild(tr);
   }
-  // Пытаемся стартовать сразу (CEF в игре часто разрешает), иначе ждём клика
-  var p = v.play();
-  if (p && p.catch) p.catch(function () { bigplay.style.display = "flex"; });
+  // Стартуем сразу. Если CEF заблокирует автоплей со звуком,
+  // startPlayback повторит попытку без звука, а не оставит чёрный экран.
+  startPlayback();
   setInterval(poll, 250);
   setInterval(report, 2000);
   report();
