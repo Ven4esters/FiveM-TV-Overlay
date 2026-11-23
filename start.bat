@@ -75,7 +75,9 @@ echo [4/4] Проверяю установку ...
 if errorlevel 1 goto FAIL
 
 REM Проверка вывода с эмодзи (частая причина сбоя на русской Windows)
-".venv\Scripts\python.exe" console_io.py >nul 2>&1
+REM Модуль лежит в пакете: src/tvhost/infra/console_io.py
+set "PYTHONPATH=%~dp0src"
+".venv\Scripts\python.exe" -m tvhost.infra.console_io >nul 2>&1
 if errorlevel 1 (
     echo    [предупреждение] Проблема с кодировкой консоли.
     echo    Прокси может не запуститься. Запустите: run_console.bat
