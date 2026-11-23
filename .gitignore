@@ -40,3 +40,4 @@ desktop.ini
 # Секреты (никогда не коммитим)
 .env
 *.token
+diag.log
