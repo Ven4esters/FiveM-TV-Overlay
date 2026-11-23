@@ -29,6 +29,7 @@ from pathlib import Path
 from PySide6.QtCore import QPoint, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractScrollArea,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -996,7 +997,14 @@ class Overlay(QWidget):
         sb.addLayout(head_row)
 
         self.lst_sess = QListWidget()
-        self.lst_sess.setMaximumHeight(96)
+        # ВАЖНО: sizeHint у QListWidget всегда 192 px (3 строки по 64),
+        # а maximumHeight его только обрезает — layout всё равно резервирует
+        # 192 px, и окно раздувается на ~100 px при появлении первой сессии
+        # (жалоба «пустое окно 605, а со ссылкой 985»). Поэтому задаём высоту
+        # строкой-подсказкой, а не максимумом.
+        self.lst_sess.setSizeAdjustPolicy(QAbstractScrollArea.SizeAdjustPolicy.AdjustToContents)
+        self.lst_sess.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.lst_sess.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.lst_sess.itemDoubleClicked.connect(self._switch_session)
         self.lst_sess.setToolTip("Двойной клик по строке — вернуть управление этим видео")
         sb.addWidget(self.lst_sess)
@@ -1732,11 +1740,28 @@ class Overlay(QWidget):
             item.setToolTip(it.get("url", ""))
             self.lst_sess.addItem(item)
         self.lst_sess.setVisible(len(items) > 0)
+        self._fit_sessions_height()
         # подсказка, если переключились на другое видео
         if len(items) > 1 and current:
             others = [i for i in items if i.get("sid") != current]
             if others:
                 self.lbl_remote.setToolTip("Другие запущенные видео — в списке «Сейчас запущено»")
+
+    def _fit_sessions_height(self) -> None:
+        """Высота списка = высота его строк, а не «три строки всегда».
+
+        QListWidget по умолчанию просит 192 px независимо от числа строк,
+        из-за чего карточка «Сейчас запущено» занимала вдвое больше места,
+        чем нужно, а окно раздувалось.
+        """
+        n = self.lst_sess.count()
+        if n == 0:
+            self.lst_sess.setFixedHeight(0)
+            return
+        row = self.lst_sess.sizeHintForRow(0) or 28
+        frame = 2 * self.lst_sess.frameWidth()
+        need = n * row + frame + 4  # 4 — внутренний padding из QSS
+        self.lst_sess.setFixedHeight(min(need, 132))  # больше 4 строк — скролл
 
     def _switch_session(self, item: QListWidgetItem) -> None:
         """Вернуть пульт к уже запущенному видео."""
