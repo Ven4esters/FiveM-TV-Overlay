@@ -341,6 +341,22 @@ Rutube в часы пик отдаёт 70–450 КБ/с, а сегмент 1080p
 
 ---
 
+### ERR-047: push отклонён из-за файла в `.github/workflows/`
+
+**Симптом:** `! [remote rejected] main -> main (refusing to allow a Personal Access Token to create or update workflow .github/workflows/ci.yml without workflow scope)` — при том, что право **Contents: Read and write** выдано.
+
+**Причина:** GitHub выделяет файлы воркфлоу в отдельное право **Workflows**. Fine-grained токен без него не может ни создать, ни изменить `.github/workflows/*.yml`, даже с полным доступом к содержимому. REST API (`PUT /contents/...`) отвечает тем же: `403 Resource not accessible by personal access token`.
+
+**Решение:** два пути.
+1. Дополнить токен правом **Workflows: Read and write** (fine-grained) или галочкой `workflow` (classic).
+2. Залить `ci.yml` руками через веб: **Add file → Upload files**, путь `.github/workflows/ci.yml`.
+
+**Проверка:** `git push` без упоминания `workflow` в ошибке; файл виден в `GET /repos/{owner}/{repo}/contents/.github/workflows/ci.yml`.
+
+**Мораль:** при первом push репозитория с готовым CI закладывайте право `Workflows` заранее — иначе пуш падает целиком, а не частично, и остальные 76 файлов тоже не уезжают.
+
+---
+
 ## Что делать с новой ошибкой
 
 1. Воспроизведите и снимите отчёт диагностики.
