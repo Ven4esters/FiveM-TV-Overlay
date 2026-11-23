@@ -9,11 +9,14 @@ from __future__ import annotations
 from ..core import registry
 from .base import YtDlpSource, extract_info, pick_direct_formats, pick_hls_qualities
 from .rutube import RutubeSource, video_id
+from .vk import VkSource, nominal_from_url
 
 __all__ = [
     "RutubeSource",
+    "VkSource",
     "YtDlpSource",
     "extract_info",
+    "nominal_from_url",
     "pick_direct_formats",
     "pick_hls_qualities",
     "register_all",
@@ -26,3 +29,4 @@ def register_all() -> None:
     if "Rutube" in registry.names():
         return  # уже зарегистрированы — повторный вызов безопасен
     registry.register(RutubeSource())
+    registry.register(VkSource())

@@ -26,9 +26,7 @@ tvhost = "tvhost.__main__:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-# новые пакеты v2
 [tool.setuptools]
-packages = {find = {where = ["src"]}}
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]

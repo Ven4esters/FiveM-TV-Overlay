@@ -62,6 +62,14 @@ class Quality:
     width: int
     bitrate_kbps: int
     url: str
+    nominal_height: int = 0
+    """«Паспортное» качество, как его называет сайт.
+
+    VK пишет `url1080`, а кадр отдаёт 1920x960 (фильм 2:1 с полосами).
+    Показывать «960p» — путать человека: он искал 1080p. Здесь 1080,
+    а в height — реальные 960, которые нужны для RESOLUTION в плеере.
+    Если 0 — берём height.
+    """
 
     def __post_init__(self) -> None:
         if self.height <= 0:
@@ -81,11 +89,26 @@ class Quality:
         return self.height > self.width
 
     @property
+    def label_height(self) -> int:
+        """Высота для подписи: паспортная, если сайт её назвал."""
+        return self.nominal_height or self.height
+
+    @property
     def label(self) -> str:
-        """Подпись для выпадающего списка качества."""
+        """Подпись для выпадающего списка качества.
+
+        У вертикального видео качество меряется по ШИРИНЕ: клип 1080x1920
+        это «1080p», а не «1920p» — иначе он в списке стоит выше 4K.
+        """
         if self.is_portrait:
-            return f"{self.width}x{self.height} (верт.)"
-        return f"{self.height}p"
+            side = self.nominal_height or self.width
+            return f"{side}x{self.height} (верт.)"
+        return f"{self.label_height}p"
+
+    @property
+    def is_letterboxed(self) -> bool:
+        """Кадр шире 16:9 — фильм с чёрными полосами сверху и снизу."""
+        return self.width * 9 > self.height * 16
 
 
 @dataclass(frozen=True, slots=True)
