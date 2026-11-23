@@ -190,7 +190,7 @@ class TestResolve:
         )
         stream = YouTubeSource().resolve("https://www.youtube.com/watch?v=aqz-KE-bpKQ")
         assert stream.source == "YouTube"
-        assert stream.kind is StreamKind.HLS_SPLIT
+        assert stream.kind is StreamKind.HLS
         assert stream.duration_s == 635
         assert stream.audio_url.endswith("233/index.m3u8")
         assert len(stream.qualities) == 6

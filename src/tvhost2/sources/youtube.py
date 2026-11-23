@@ -8,13 +8,19 @@
   `EXT-X-MEDIA` не проиграет;
 * мультиплекса (видео+звук сразу) нет ни в VOD, ни в live.
 
-Значит, собрать «правильный» master-плейлист нельзя: браузер получит
-картинку без звука. Поэтому единственный надёжный путь — склеить дорожки
-на своей стороне через ffmpeg в режиме `-c copy` (без перекодирования).
+**Важно (проверено экспериментом 23.11.2026).** Первый вывод был неверным:
+казалось, что hls.js не проиграет сырой AAC в аудиогруппе. Замер в реальном
+Chromium показал обратное — звук декодируется, работает перемотка и ручная
+смена качества:
 
-Проверено: 10 минут 144p склеиваются за ~5 секунд, на выходе h264 + AAC.
-Цена — ffmpeg должен быть на компьютере (на Windows кладём рядом с .exe,
-в pip-пакете imageio-ffmpeg он уже есть).
+    старт+10с   rs=4  аудио=56 508 байт   видео=2 257 392   1920x1080
+    +8с         rs=4  аудио=105 603       видео=8 917 911
+    seek 2:05   rs=4  аудио=140 718       видео=12 610 178
+    смена 480p  rs=4  аудио=183 436       видео=12 710 454   640x360
+
+Поэтому штатный режим — обычный HLS-мастер с аудиогруппой: без скачивания,
+без ожидания, без места на диске. Склейка через ffmpeg остаётся аварийным
+путём для видео, где HLS-аудио нет вовсе.
 """
 
 from __future__ import annotations
@@ -59,8 +65,8 @@ class YouTubeSource(YtDlpSource):
         "youtube-nocookie.com",
     )
     state = SourceState.OK
-    note = "до 1080p, живые стримы"
-    kind = StreamKind.HLS_SPLIT
+    note = "до 1080p (H.264), без входа"
+    kind = StreamKind.HLS
 
     def extractor_opts(self) -> dict[str, Any]:
         return {"format": "all"}
@@ -159,7 +165,7 @@ class YouTubeSource(YtDlpSource):
         return Stream(
             source=self.name,
             title=str(info.get("title") or "").strip() or "YouTube",
-            kind=StreamKind.HLS_SPLIT,
+            kind=StreamKind.HLS,
             qualities=qualities,
             audio_url=str(audio.get("url") or ""),
             duration_s=int(info.get("duration") or 0),
