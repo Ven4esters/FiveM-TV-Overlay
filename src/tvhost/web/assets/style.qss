@@ -589,3 +589,68 @@ QFrame#divider {
     max-height: 1px;
     border: none;
 }
+
+/* ---------------- нормализация громкости ---------------- */
+
+/* Подпись «Нормализация» — как sectionTitle, но мельче: это не заголовок
+   блока, а подпись к переключателю. */
+QLabel#normTitle {
+    color: #CBD2E4;
+    font-size: 12px;
+}
+
+/* Значение усиления («+8.6 дБ») — моноширинный, чтобы цифры не «прыгали»
+   при обновлении и столбец не дёргался. */
+QLabel#normValue {
+    color: #8B93A7;
+    font-size: 12px;
+    font-family: "Consolas", "Courier New", monospace;
+}
+
+/* Значение при включённой нормализации — активное, синее как primary. */
+QLabel#normValue[active="true"] {
+    color: #4D8DFF;
+}
+
+/* Пояснение под панелью: почему звук был громким. Приглушённое. */
+QLabel#normHint {
+    color: #6E7689;
+    font-size: 11px;
+}
+
+/* Переключатель нормализации — Secondary (контур), как требует правило:
+   Primary заливкой остаётся одна главная кнопка экрана. */
+QPushButton#normToggle {
+    background-color: transparent;
+    border: 1px solid #39404F;
+    border-radius: 6px;
+    color: #CBD2E4;
+    font-size: 12px;
+    padding: 4px 8px;
+    text-align: left;
+}
+
+QPushButton#normToggle:hover {
+    border-color: #4D8DFF;
+    color: #FFFFFF;
+}
+
+QPushButton#normToggle:pressed {
+    background-color: #2A3242;
+}
+
+QPushButton#normToggle:focus {
+    border: 1px solid #3B82F6;
+}
+
+/* Включённое состояние: синяя рамка и синий текст, но БЕЗ заливки —
+   полупрозрачных подложек не бывает, а полная заливка тут слишком много. */
+QPushButton#normToggle[active="true"] {
+    border: 1px solid #4D8DFF;
+    color: #4D8DFF;
+}
+
+QPushButton#normToggle:disabled {
+    border-color: #2A3242;
+    color: #5A6478;
+}

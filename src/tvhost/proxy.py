@@ -45,9 +45,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .core import pins
-from .infra import cache, sources
+from .infra import cache, loudness, sources
 from .infra import diagnostics as diag
 from .web import player as player_mod
+
+# Замеры громкости живут между запусками: замер стоит ~3 с ffmpeg, а
+# ссылки у источников не меняются часами. Файл рядом с кешем видео.
+_LOUDNESS_CACHE = loudness.LoudnessCache(cache.CACHE_DIR / "loudness.json")
 
 # Заголовки для запросов к источникам.
 # ВАЖНО (проверено на w3.org за Cloudflare): поддельный Chrome-UA без ПОЛНОГО
@@ -921,6 +925,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             ("/cmd/", self._route_commands),
             ("/report/", self._route_report),
             ("/state/", self._route_state),
+            ("/loudness/", self._route_loudness),
             ("/control/", self._route_control),
             ("/static/", self._route_static),
             ("/trans/", self._route_translation),
@@ -1012,6 +1017,42 @@ class ProxyHandler(BaseHTTPRequestHandler):
             if hint:
                 st["errorHint"] = hint
         return self._send_json(200, st)
+
+    def _route_loudness(self, path: str, qs: dict, target):
+        """1г3) громкость потока: /loudness/<sid>
+
+        Замер идёт в фоне (до 3 секунд) и кэшируется на 6 часов. Оверлей
+        показывает «+8.6 дБ» и передаёт это значение в плеер игры.
+        """
+        sid = path[len("/loudness/") :].strip("/")
+        sess = PLAYER_SESSIONS.get(sid)
+        if sess is None:
+            return self._send_json(404, {"error": "сессия не найдена"})
+
+        key = sess.source_url or sess.url or ""
+        hit = _LOUDNESS_CACHE.get(key)
+        if hit is not None:
+            return self._send_json(200, hit.as_dict())
+
+        # сессионный источник — разбираем заново: у источника в sess.url
+        # лежит страница, а мерить надо конкретный поток.
+        stream = ""
+        try:
+            info = resolve_input(sess.source_url or sess.url)
+            stream = info.get("url") or ""
+            if not stream and info.get("formats"):
+                stream = pick_direct(info["formats"]) or ""
+        except Exception as e:  # noqa: BLE001 — замер не должен ломать пульт
+            diag.log("err", "громкость: поток не разобран", error=str(e)[:120])
+        if not stream:
+            return self._send_json(200, {"gainDb": None, "note": "поток не найден"})
+
+        value = loudness.measure(stream, self._headers_for(stream))
+        if value is None:
+            return self._send_json(200, {"gainDb": None, "note": "замер не удался"})
+        _LOUDNESS_CACHE.put(key, value)
+        diag.log("info", "громкость измерена", lufs=value.lufs, gain=value.gain_db)
+        return self._send_json(200, value.as_dict())
 
     def _route_control(self, path: str, qs: dict, target):
         """1д) управление из оверлея: /control/<sid>?cmd=play&value=0.5"""
@@ -2068,11 +2109,50 @@ class ProxyHandler(BaseHTTPRequestHandler):
         Шаги: (1) получить плейлист от источника, (2) переписать все ссылки
         внутри на наш прокси, (3) отдать. Каждый шаг — отдельный метод.
         """
-        playlist = self._hls_source_playlist(target)
+        try:
+            playlist = self._hls_source_playlist(target)
+        except Exception as e:  # noqa: BLE001 — CDN мог отказать на любом шаге
+            # ГЛАВНАЯ ПРИЧИНА levelLoadError. Раньше исключение из
+            # _probe_playlist (RuntimeError) вылетало из обработчика, и
+            # BaseHTTPRequestHandler закрывал соединение БЕЗ ОТВЕТА. Браузер
+            # видел не 502, а обрыв — и hls.js сообщал levelLoadError
+            # вместо понятной ошибки; никакого повтора при этом не было.
+            #
+            # Теперь отдаём НАСТОЯЩИЙ HTTP-код с текстом причины: hls.js
+            # попробует другое зеркало/качество, а в журнал попадёт деталь.
+            diag.log(
+                "err",
+                f"поток не отдался: {diag.short_url(target)}",
+                error=f"{type(e).__name__}: {e}"[:200],
+            )
+            return self._send_playlist_error(str(e))
         if playlist is None:
             return  # это был сегмент: байты уже отданы клиенту
         raw, final_url = playlist
         self._send_playlist(self._rewrite_playlist(raw, final_url))
+
+    def _send_playlist_error(self, reason: str) -> None:
+        """Ответ на сбой CDN: настоящий HTTP-код вместо обрыва соединения.
+
+        502 выбран осознанно: hls.js считает его сетевой ошибкой уровня и
+        сам пробует следующее качество/зеркало. Пустой обрыв он тоже
+        пытается повторить, но без информации о причине — и в интерфейсе
+        остаётся загадочный levelLoadError.
+        """
+        body = (
+            "#EXTM3U\n#EXT-X-KODIK-ERROR:" + urllib.parse.quote(reason[:120], safe="") + "\n"
+        ).encode("utf-8")
+        try:
+            self.send_response(502)
+            self.send_header("Content-Type", "application/vnd.apple.mpegurl")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Retry-After", "1")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
 
     def _hls_source_playlist(self, target: str) -> tuple[str, str] | None:
         """

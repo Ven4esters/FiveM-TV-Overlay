@@ -755,6 +755,68 @@ select.pick:focus { outline: 2px solid #4d8dff; }
     toast(on ? "Субтитры вкл" : "Субтитры выкл");
   }
 
+  // ---------- выравнивание громкости между источниками ----------
+  // Зачем: Rutube отдаёт -39.9 LUFS, Kodik -24.6, YouTube -20.9. Разброс
+  // 19 дБ — на одном источнике ползунок «20%» тихий, на другом громкий.
+  //
+  // Как: НЕ перекодируем звук (на 8 ГБ рядом с GTA это дало бы рывки).
+  // Поднимаем громкость готового потока через GainNode — это одна
+  // операция над выборкой звука, процессор её не замечает.
+  //
+  // ВАЖНО: createMediaElementSource можно вызвать для элемента ТОЛЬКО
+  // ОДИН раз за жизнь страницы, иначе браузер бросит исключение и звук
+  // пропадёт совсем. Поэтому граф строится один раз, а дальше меняется
+  // только gain.gain.value.
+  var audioCtx = null, gainNode = null, normOn = false, normGain = 1;
+
+  function ensureAudioGraph() {
+    if (gainNode) return true;
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return false;
+      audioCtx = new Ctx();
+      var src = audioCtx.createMediaElementSource(v);
+      gainNode = audioCtx.createGain();
+      gainNode.gain.value = normGain;
+      src.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      return true;
+    } catch (e) {
+      // сюда попадаем, если граф уже создан браузером (CEF иногда
+      // переиспользует элемент) — тогда просто не трогаем звук
+      gainNode = null;
+      return false;
+    }
+  }
+
+  function applyGain() {
+    if (!gainNode) return;
+    // автоплей после паузы браузера: контекст создаётся «спящим»
+    if (audioCtx && audioCtx.state === "suspended") { try { audioCtx.resume(); } catch (e) {} }
+    gainNode.gain.value = normOn ? normGain : 1;
+  }
+
+  function setNormalize(on) {
+    normOn = !!on;
+    if (!normOn) { applyGain(); return; }
+    if (!ensureAudioGraph()) { normOn = false; return; }
+    applyGain();
+    // просим у прокси усиление для этого потока (замер кэширован)
+    try {
+      fetch(BASE + "/loudness/" + SID)
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var g = Number(d && d.gainLinear);
+          if (!isFinite(g) || g <= 0) return;
+          // предел x16: выше — это уже шум записи, а не звук
+          normGain = Math.max(0.05, Math.min(16, g));
+          applyGain();
+          toast("Громкость выровнена на " + (d.gainDb > 0 ? "+" : "") + d.gainDb + " дБ");
+        })
+        .catch(function () {});
+    } catch (e) {}
+  }
+
   function applyCommand(c) {
     var val = c.value;
     switch (c.cmd) {
@@ -764,6 +826,7 @@ select.pick:focus { outline: 2px solid #4d8dff; }
       case "seek":        v.currentTime = Number(val) || 0; break;
       case "seekRel":     v.currentTime = Math.max(0, Math.min(v.duration || 1e9, v.currentTime + (Number(val) || 0))); break;
       case "volume":      v.volume = Math.max(0, Math.min(1, Number(val))); v.muted = false; break;
+      case "normalize":   setNormalize(val === true || val === "true" || val === 1); break;
       case "mute":        v.muted = (val === true || val === "true" || val === 1); break;
       case "subs":        setSubs(val === true || val === "true" || val === 1); break;
       case "fullscreen":  setFullscreen(val === true || val === "true" || val === 1); break;

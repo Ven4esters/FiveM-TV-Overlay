@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
 
 from ..infra import console_io  # noqa: F401 — UTF-8/эмодзи безопасно на Windows
 from ..infra import diagnostics as diag
-from ..infra.cache import CACHE_DIR as _CACHE_DIR  # noqa: F401
+from ..infra.cache import CACHE_DIR as _CACHE_DIR
 from . import icons as ui_icons
 
 # Корень проекта: ui/ → tvhost/ → src/ → корень (для style.qss и icons/)
@@ -534,6 +534,7 @@ class ProxyController:
 class Overlay(QWidget):
     status_signal = Signal(str)
     session_signal = Signal(str, str)  # (player_url, sid)
+    loudness_signal = Signal(str)  # измеренное усиление для панели
     state_signal = Signal(dict)  # состояние от страницы
     error_signal = Signal(str)  # текст ошибки
     sessions_signal = Signal(dict)  # список активных сессий
@@ -583,11 +584,18 @@ class Overlay(QWidget):
         self.diag_signal.connect(self._show_diag_window)
         self.pin_signal.connect(self._pin_done)
         self.pins_signal.connect(self._apply_pins)
+        self.loudness_signal.connect(self._apply_loudness)
 
         # Отдельное окно для подсказок/ошибок/лога — главное окно не растягивается
         self.note = NoteWindow()
         self.note.setStyleSheet(self._load_qss())
         self.note.retry_requested.connect(self._retry_last)
+
+        # Нормализация громкости: состояние из прошлого запуска. Ставим
+        # после создания всех виджетов — setChecked дёргает _toggle_*, и
+        # им нужны btn_norm_switch и lbl_norm_value.
+        if self._load_ui_flag("normalize", False):
+            self.btn_norm_switch.setChecked(True)
 
     # ---------- UI ----------
     # ---------- иконки ----------
@@ -958,8 +966,65 @@ class Overlay(QWidget):
         self.sld_vol.setFixedWidth(88)
         self.sld_vol.setFixedHeight(20)
         brow.addWidget(self.sld_vol, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        # кнопка нормализации: сворачивает/разворачивает панель настроек
+        # звука. Иконка (столбики) отдельным SVG — эмодзи запрещены.
+        self.btn_norm = QPushButton("")
+        self.btn_norm.setObjectName("pad")
+        self.btn_norm.setToolTip("Нормализация громкости")
+        self.btn_norm.setIcon(self._icon("normalize"))
+        self.btn_norm.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_norm.setCheckable(True)
+        self.btn_norm.toggled.connect(self._toggle_norm_panel)
+        brow.addWidget(self.btn_norm, 0, Qt.AlignmentFlag.AlignVCenter)
+
         brow.addStretch(1)
         rb.addLayout(brow)
+
+        # ---------------- нормализация громкости ----------------
+        # Проблема заказчика: на Rutube -39.9 LUFS, на Kodik -24.6, на
+        # YouTube -20.9 — разброс 19 дБ. Ползунок один, поэтому «на 20»
+        # для одного источника тихо, для другого громко.
+        #
+        # Панель скрыта по умолчанию: пульт не должен раздуваться
+        # (правило 25). Открывается кнопкой с иконкой «столбики».
+        self.norm_box = QFrame()
+        self.norm_box.setObjectName("normPanel")
+        nb = QVBoxLayout(self.norm_box)
+        nb.setContentsMargins(0, 8, 0, 0)
+        nb.setSpacing(8)
+        self.norm_box.setVisible(False)
+
+        nrow = QHBoxLayout()
+        nrow.setSpacing(8)
+
+        self.btn_norm_switch = QPushButton("Выравнивать громкость")
+        self.btn_norm_switch.setObjectName("normToggle")
+        self.btn_norm_switch.setCheckable(True)
+        self.btn_norm_switch.setToolTip(
+            "Подтягивать тихие источники и приглушать громкие до одного уровня"
+        )
+        self.btn_norm_switch.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_norm_switch.toggled.connect(self._toggle_normalisation)
+        nrow.addWidget(self.btn_norm_switch, 1)
+
+        # измеренное усиление текущего видео: «+8.6 дБ» или «в норме»
+        self.lbl_norm_value = QLabel("—")
+        self.lbl_norm_value.setObjectName("normValue")
+        self.lbl_norm_value.setAlignment(
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+        )
+        nrow.addWidget(self.lbl_norm_value, 0)
+        nb.addLayout(nrow)
+
+        hint = QLabel(
+            "Разные сайты отдают звук с разной громкостью — здесь он приводится к одному уровню."
+        )
+        hint.setObjectName("normHint")
+        hint.setWordWrap(True)
+        nb.addWidget(hint)
+
+        rb.addWidget(self.norm_box)
 
         # ---------------- активные сессии ----------------
         self.sess_box = QFrame()
@@ -1575,6 +1640,10 @@ class Overlay(QWidget):
         self.lbl_remote.setText("Пульт: жду, когда телевизор откроет ссылку…")
         self._remote_state("warn")
         self._remote_status("ready")
+        # замер громкости нужен только при включённой нормализации:
+        # без неё ползунок работает как обычный.
+        if self.btn_norm_switch.isChecked():
+            self._refresh_loudness()
 
     def _remote_error(self, msg: str) -> None:
         """Показать ошибку в пульте и в панели сообщений (без модальных окон)."""
@@ -1854,6 +1923,112 @@ class Overlay(QWidget):
     def _remote_volume(self, val: int) -> None:
         self._remote_cmd("volume", round(val / 100, 2))
 
+    # ------------------------------------------------------------------
+    #                    НОРМАЛИЗАЦИЯ ГРОМКОСТИ
+    # ------------------------------------------------------------------
+    def _toggle_norm_panel(self, on: bool) -> None:
+        """Показать/скрыть панель настроек звука.
+
+        Высоту до раскрытия запоминаем и возвращаем после сворачивания:
+        layout считает sizeHint по скрытым виджетам слишком грубо, и без
+        этого окно либо оставалось раздутым, либо схлопывалось ниже
+        исходного (проверено обе крайности).
+        """
+        if on:
+            self._height_before_norm = self.height()
+        self.norm_box.setVisible(on)
+        if on:
+            QTimer.singleShot(0, self._fit_height)
+        else:
+            QTimer.singleShot(0, self._restore_height_after_norm)
+
+    def _restore_height_after_norm(self) -> None:
+        """Вернуть высоту, которая была до раскрытия панели звука."""
+        before = getattr(self, "_height_before_norm", 0)
+        if before > 200:
+            self.setMinimumHeight(0)
+            self.resize(self.width(), before)
+        else:
+            self._fit_height()
+
+    def _toggle_normalisation(self, on: bool) -> None:
+        """Включить/выключить выравнивание громкости.
+
+        Настройка запоминается в videos/cache/ui.json — при следующем
+        запуске панель уже в нужном состоянии. Самому браузеру игры
+        передаётся команда "normalize": плеер поднимает громкость на
+        измеренную величину через GainNode.
+        """
+        self.btn_norm_switch.setProperty("active", "true" if on else "false")
+        self.btn_norm_switch.style().unpolish(self.btn_norm_switch)
+        self.btn_norm_switch.style().polish(self.btn_norm_switch)
+        self.lbl_norm_value.setProperty("active", "true" if on else "false")
+        self.lbl_norm_value.style().unpolish(self.lbl_norm_value)
+        self.lbl_norm_value.style().polish(self.lbl_norm_value)
+        self._save_ui_flag("normalize", on)
+        self._remote_cmd("normalize", bool(on))
+        if on:
+            self._refresh_loudness()
+
+    def _refresh_loudness(self) -> None:
+        """Запросить у прокси измеренную громкость текущего потока.
+
+        Замер идёт в фоне на стороне прокси (ffmpeg ebur128, ~3 секунды)
+        и кэшируется на 6 часов. Здесь только показываем результат.
+        """
+        # getattr: панель восстанавливает состояние из прошлого запуска
+        # ещё до создания player_sid — прямой доступ падал с AttributeError.
+        sid = getattr(self, "player_sid", "")
+        if not sid:
+            self.lbl_norm_value.setText("—")
+            return
+
+        def worker() -> None:
+            try:
+                url = f"{self._base_url()}/loudness/{sid}"
+                with urllib.request.urlopen(url, timeout=25) as r:
+                    data = json.loads(r.read().decode("utf-8"))
+                gain = data.get("gainDb")
+                if gain is None:
+                    text = "нет данных"
+                elif abs(float(gain)) < 1.0:
+                    text = "в норме"
+                else:
+                    text = f"{float(gain):+.1f} дБ"
+                self.loudness_signal.emit(text)
+            except Exception:
+                self.loudness_signal.emit("—")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_loudness(self, text: str) -> None:
+        self.lbl_norm_value.setText(text)
+
+    def _save_ui_flag(self, key: str, value: bool) -> None:
+        """Запомнить переключатель между запусками."""
+        try:
+            path = _CACHE_DIR / "ui.json"
+            data = {}
+            if path.exists():
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    data = {}
+            data[key] = bool(value)
+            path.write_text(json.dumps(data), encoding="utf-8")
+        except OSError as e:
+            diag.log("err", "настройка не сохранилась", error=str(e)[:120])
+
+    def _load_ui_flag(self, key: str, default: bool = False) -> bool:
+        try:
+            path = _CACHE_DIR / "ui.json"
+            if path.exists():
+                data = json.loads(path.read_text(encoding="utf-8"))
+                return bool(data.get(key, default))
+        except (OSError, json.JSONDecodeError):
+            pass
+        return default
+
     def _refresh_quality_list(self, st: dict) -> None:
         """Перестроить выпадающий список качеств, не теряя выбор."""
         qualities = st.get("qualities") or []
@@ -2025,6 +2200,11 @@ class Overlay(QWidget):
             need += 2
             if need < 200:
                 return
+            # QVBoxLayout выставляет окну минимальную высоту по sizeHint
+            # раскрытого состояния, и resize() её не пробивает: окно
+            # оставалось раздутым после сворачивания панели (правило 25).
+            # Снимаем минимум перед подгонкой.
+            self.setMinimumHeight(0)
             self.resize(self.width(), need)
         except Exception:
             pass

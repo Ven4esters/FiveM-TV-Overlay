@@ -26,6 +26,8 @@ import re
 import urllib.parse
 import urllib.request
 
+from . import diagnostics as diag
+
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
@@ -992,6 +994,33 @@ def _real_width(height: int) -> int:
     return int(round(height * 16 / 9))
 
 
+def _probe_alive_qualities(urls: list[str], timeout: int = 6) -> set[str]:
+    """Какие из ссылок Kodik реально отдают плейлист СЕЙЧАС.
+
+    Возвращает множество живых ссылок. Пустое множество = проверить не
+    удалось (нет сети, все таймауты) — тогда вызывающий оставляет всё
+    как есть, а не отдаёт пустой master.
+    """
+    if not urls:
+        return set()
+
+    def check(url: str) -> bool:
+        try:
+            code, body, _ = _get(url, {"Referer": "https://kodikplayer.com/"}, timeout=timeout)
+            return code == 200 and body.lstrip().startswith("#EXTM3U")
+        except Exception:  # мёртвое зеркало это не ошибка
+            return False
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=len(urls)) as pool:
+        results = list(pool.map(check, urls))
+    alive = {u for u, ok in zip(urls, results, strict=True) if ok}
+    if alive and len(alive) < len(urls):
+        diag.log("info", f"Kodik: {len(urls) - len(alive)} зеркал(о) не ответили — убрал из списка")
+    return alive
+
+
 def kodik_master(
     player_url: str, translation_id: int | None = None, referer: str = ""
 ) -> dict | None:
@@ -1016,6 +1045,21 @@ def kodik_master(
             continue
         variants.append((real, url))
     variants.sort(key=lambda x: x[0], reverse=True)
+
+    # Проверяем зеркала ЖИВЬЁМ и выбрасываем мёртвые.
+    #
+    # Причина levelLoadError у заказчика (ERR-081): Kodik раздаёт каждое
+    # качество со своего зеркала (p12/p13/p14), и одно из них может не
+    # ответить на конкретный файл. Если такое качество попадает в master,
+    # hls.js выбирает его по битрейту и падает — снаружи это выглядит как
+    # «поток не воспроизводится», хотя 720p живой.
+    #
+    # Проверка параллельная и с коротким таймаутом: три запроса по 6 с
+    # идут одновременно, то есть резолв замедляется максимум на 6 с, а
+    # обычно — на доли секунды (плейлист отдаётся мгновенно).
+    alive = _probe_alive_qualities([u for _, u in variants])
+    if alive:
+        variants = [(h, u) for h, u in variants if u in alive]
 
     for h, url in variants:
         br = max(400, int(h * 4.5))

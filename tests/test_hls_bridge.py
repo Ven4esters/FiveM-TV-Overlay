@@ -286,3 +286,88 @@ class TestDiagnosticsJournal:
         last = rows[-1]
         assert "fragLoadError" in str(last)
         assert "720p" in str(last)
+
+
+class TestKodikDeadMirrors:
+    """ERR-081: мёртвое зеркало Kodik роняло поток с levelLoadError.
+
+    Заказчик получил ошибку на живой ссылке, хотя 720p отдавался нормально:
+    hls.js выбирал качество, чьё зеркало (p12/p13/p14) не ответило на
+    конкретный файл. Проверка зеркал перед сборкой master решает это.
+    """
+
+    def test_dead_mirror_is_dropped(self, monkeypatch) -> None:
+        """Мёртвая ссылка не должна попадать в master."""
+        live = "https://p12.solodcdn.com/x/720.mp4:hls:manifest.m3u8"
+        dead = "https://p99.solodcdn.com/x/480.mp4:hls:manifest.m3u8"
+
+        def fake_probe(urls, timeout=6):
+            return {live}
+
+        monkeypatch.setattr(sources, "_probe_alive_qualities", fake_probe)
+        monkeypatch.setattr(
+            sources,
+            "kodik_streams",
+            lambda *_a, **_k: {
+                "qualities": {720: live, 480: dead},
+                "translation": "СВ-Дубль",
+                "translation_id": 729,
+            },
+        )
+        master = sources.kodik_master("https://kodikplayer.com/seria/1/" + "a" * 32 + "/720p")
+        assert master is not None
+        assert master["qualities"] == [720]
+        assert "p99" not in master["playlist"]
+
+    def test_total_probe_failure_keeps_everything(self, monkeypatch) -> None:
+        """Проверка не удалась (нет сети) — отдаём все качества, не пустоту.
+
+        Пустой master хуже мёртвого зеркала: видео не запустится вовсе.
+        """
+        hi = "https://p12.solodcdn.com/x/720.mp4:hls:manifest.m3u8"
+        lo = "https://p13.solodcdn.com/x/480.mp4:hls:manifest.m3u8"
+        monkeypatch.setattr(sources, "_probe_alive_qualities", lambda *_a, **_k: set())
+        monkeypatch.setattr(
+            sources,
+            "kodik_streams",
+            lambda *_a, **_k: {
+                "qualities": {720: hi, 480: lo},
+                "translation": "СВ-Дубль",
+                "translation_id": 729,
+            },
+        )
+        master = sources.kodik_master("https://kodikplayer.com/seria/1/" + "a" * 32 + "/720p")
+        assert master is not None
+        assert sorted(master["qualities"]) == [480, 720]
+
+    def test_probe_returns_empty_on_bad_links(self, monkeypatch) -> None:
+        """_probe_alive_qualities не падает на несуществующих доменах."""
+
+        def boom(*a, **k):
+            raise OSError("нет сети")
+
+        monkeypatch.setattr(sources, "_get", boom)
+        assert sources._probe_alive_qualities(["https://нет.такого/x.m3u8"]) == set()
+
+    def test_probe_empty_input(self) -> None:
+        assert sources._probe_alive_qualities([]) == set()
+
+
+class TestPlaylistErrorInsteadOfDrop:
+    """ERR-081: ошибка CDN должна быть HTTP-ответом, а не обрывом связи.
+
+    Раньше RuntimeError из _probe_playlist вылетал из обработчика, и
+    BaseHTTPRequestHandler закрывал сокет без ответа. Снаружи это выглядело
+    как levelLoadError без причины.
+    """
+
+    def test_error_playlist_is_valid_m3u8(self) -> None:
+        """Тело ошибки остаётся валидным HLS-плейлистом с причиной."""
+        import urllib.parse
+
+        reason = "HTTP Error 404: Not Found"
+        body = "#EXTM3U\n#EXT-X-KODIK-ERROR:" + urllib.parse.quote(reason, safe="") + "\n"
+        assert body.startswith("#EXTM3U")
+        assert "KODIK-ERROR" in body
+        decoded = urllib.parse.unquote(body.split("KODIK-ERROR:")[1].strip())
+        assert decoded == reason
