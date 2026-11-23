@@ -90,8 +90,11 @@ timeout /t 2 >nul
 
 REM ---------- ЗАПУСК ----------
 :RUN
+REM Код лежит в src/tvhost: запускаем ПАКЕТ, а не файл overlay.py.
+REM Без PYTHONPATH Python не найдёт пакет рядом со скриптом.
+set "PYTHONPATH=%~dp0src"
 echo Запускаю оверлей... (это окно закроется)
-start "" "%VENV_PYW%" overlay.py
+start "" "%VENV_PYW%" -m tvhost
 exit /b 0
 
 REM ---------- Ошибка ----------

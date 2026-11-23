@@ -18,7 +18,9 @@ echo Запускаю оверлей с выводом логов в это ок
 echo Закройте окно оверлея или нажмите Ctrl+C для выхода.
 echo.
 
-".venv\Scripts\python.exe" overlay.py
+REM Код лежит в src/tvhost: запускаем ПАКЕТ (-m), а не файл overlay.py.
+set "PYTHONPATH=%~dp0src"
+".venv\Scripts\python.exe" -m tvhost
 
 echo.
 echo Оверлей закрыт.
