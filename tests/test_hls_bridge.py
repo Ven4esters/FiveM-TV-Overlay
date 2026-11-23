@@ -204,6 +204,63 @@ class TestRutubeQualities:
         assert sorted(quality_urls, reverse=True) == [1080, 720]
 
 
+class TestRutubeBitrates:
+    """BANDWIDTH в master должен быть РЕАЛЬНЫМ (ERR-067).
+
+    Было h*8000: для 1080p это 8.6 Мбит/с при фактических 5.9. hls.js
+    считал канал недостаточно быстрым и навсегда оставался на 144p.
+    """
+
+    def test_collects_real_bitrate_per_height(self):
+        formats = [
+            {
+                "protocol": "m3u8_native",
+                "url": "https://c/1080.mp4.m3u8",
+                "height": 1080,
+                "tbr": 5884,
+                "vcodec": "avc1",
+            },
+            {
+                "protocol": "m3u8_native",
+                "url": "https://c/720.mp4.m3u8",
+                "height": 720,
+                "tbr": 2308,
+                "vcodec": "avc1",
+            },
+            {
+                "protocol": "m3u8_native",
+                "url": "https://c/audio.m3u8",
+                "height": 0,
+                "tbr": 128,
+                "vcodec": "none",
+            },
+        ]
+        heights, bitrates, _files = sources._collect_qualities(formats)
+        assert heights == {1080: "https://c/1080.mp4.m3u8", 720: "https://c/720.mp4.m3u8"}
+        assert bitrates == {"1080": 5884, "720": 2308}
+        # 1080p НЕ должен заявляться как 8640 кбит/с
+        assert bitrates["1080"] < 7000
+
+    def test_master_uses_bitrates_not_height_formula(self):
+        """В собранном master BANDWIDTH берётся из bitrates."""
+        import ast
+        from pathlib import Path
+
+        src = Path(__file__).resolve().parents[1] / "src" / "tvhost" / "proxy.py"
+        tree = ast.parse(src.read_text(encoding="utf-8"))
+        func = next(
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "_route_rutube_master"
+        )
+        body = ast.unparse(func)
+        assert "bitrates" in body, (
+            "_route_rutube_master не использует реальные битрейты — "
+            "hls.js снова застрянет на низком качестве"
+        )
+        assert "h * 8000" not in body, "вернулась оценка битрейта h*8000"
+
+
 class TestDiagnosticsJournal:
     """Журнал работы программы должен реально писаться на диск."""
 

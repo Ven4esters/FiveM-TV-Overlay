@@ -1236,6 +1236,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             variants = (info or {}).get("variants") or {}
             quality_files = (info or {}).get("quality_files") or {}
             base = (info or {}).get("master_base") or ""
+            bitrates = {int(h): int(b) for h, b in ((info or {}).get("bitrates") or {}).items()}
             if variants:
                 quality_urls = {int(h): u for h, u in variants.items() if str(h).isdigit()}
             elif quality_files:
@@ -1245,9 +1246,14 @@ class ProxyHandler(BaseHTTPRequestHandler):
             lines = ["#EXTM3U", "#EXT-X-VERSION:3"]
             # от лучшего к худшему
             for h in sorted(quality_urls, reverse=True):
-                bw = h * 8000  # оценка битрейта: 1080p ≈ 8.6 Мбит/с
+                # Битрейт — РЕАЛЬНЫЙ из источника (yt-dlp: tbr). Раньше здесь
+                # было h*8000 (1080p ≈ 8.6 Мбит/с при фактических 5.9) —
+                # завышение на 47%, и hls.js считал, что канал не тянет
+                # уровень, поэтому навсегда оставался на 144p.
+                bw = bitrates.get(h) or int(h * 5500)
                 lines.append(
-                    f'#EXT-X-STREAM-INF:BANDWIDTH={bw},RESOLUTION={int(h * 16 / 9)}x{h},NAME="{h}p"'
+                    f"#EXT-X-STREAM-INF:BANDWIDTH={bw * 1000},"
+                    f'RESOLUTION={int(h * 16 / 9)}x{h},NAME="{h}p"'
                 )
                 lines.append(f"/hls?url={urllib.parse.quote(quality_urls[h], safe='')}")
             body = "\n".join(lines).encode("utf-8")

@@ -109,6 +109,37 @@ def rutube_stream(url: str) -> dict | None:
     return _cached("rutube:" + url, lambda: _rutube_stream_uncached(url))
 
 
+def _collect_qualities(
+    formats: list[dict],
+) -> tuple[dict[int, str], dict[str, int], dict[str, str]]:
+    """Собрать качества Rutube из форматов yt-dlp.
+
+    Возвращает три словаря: адреса по высоте, реальные битрейты (кбит/с)
+    и имена файлов вида 720p_stream.m3u8 (для запасного пути /hls).
+
+    Битрейт нужен настоящий: если в master написать завышенный, hls.js
+    решит, что канал не тянет уровень, и навсегда останется на 144p.
+    """
+    heights: dict[int, str] = {}
+    bitrates: dict[str, int] = {}
+    files_map: dict[str, str] = {}
+    for f in formats:
+        if "m3u8" not in (f.get("protocol") or "") or not f.get("url"):
+            continue
+        if (f.get("vcodec") or "none") == "none":
+            continue
+        h = int(f.get("height") or 0)
+        if not h:
+            continue
+        heights.setdefault(h, f["url"])
+        if f.get("tbr"):
+            bitrates[str(h)] = int(f["tbr"])
+        m = re.search(r"(\d+p_stream\.m3u8)", f["url"])
+        if m:
+            files_map[str(h)] = m.group(1)
+    return heights, bitrates, files_map
+
+
 def _rutube_stream_uncached(url: str) -> dict | None:
     import yt_dlp
 
@@ -140,24 +171,7 @@ def _rutube_stream_uncached(url: str) -> dict | None:
     #    канале/перегруженном CDN сегменты 1080p (6.8 Мбит/с) не успевали
     #    скачаться за 4 секунды — hls.js падал с manifestLoadError.
     #    Теперь hls.js сам выбирает качество по скорости и переключается.
-    heights: dict[int, str] = {}
-    files_map: dict[str, str] = {}
-    for f in info.get("formats") or []:
-        if "m3u8" not in (f.get("protocol") or ""):
-            continue
-        if not f.get("url"):
-            continue
-        if (f.get("vcodec") or "none") == "none":
-            continue
-        h = int(f.get("height") or 0)
-        if not h:
-            continue
-        heights.setdefault(h, f["url"])
-        # имя файла качества (360p_stream.m3u8) — чтобы /hls мог подставить
-        # любое качество, не перезапрашивая yt-dlp
-        m = re.search(r"(\d+p_stream\.m3u8)", f["url"])
-        if m:
-            files_map[str(h)] = m.group(1)
+    heights, bitrates, files_map = _collect_qualities(info.get("formats") or [])
 
     if heights:
         return {
@@ -165,6 +179,10 @@ def _rutube_stream_uncached(url: str) -> dict | None:
             "title": title,
             "qualities": sorted(heights, reverse=True),
             "variants": {str(h): u for h, u in sorted(heights.items(), reverse=True)},
+            # реальный битрейт (кбит/с): нужен для BANDWIDTH в master.
+            # Завышенный битрейт заставляет hls.js думать, что канал
+            # не тянет уровень, и он навсегда остаётся на 144p.
+            "bitrates": bitrates,
             "quality_files": files_map,
             "master_base": heights[max(heights)].rsplit("/", 1)[0] + "/",
         }

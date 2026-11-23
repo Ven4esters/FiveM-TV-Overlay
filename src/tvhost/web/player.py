@@ -487,11 +487,35 @@ select.pick:focus { outline: 2px solid #4d8dff; }
     }
     if (!window.Hls || !window.Hls.isSupported()) return false;
 
+    // Таймауты и стартовый уровень — те же, что у запасного плеера ниже.
+    // Раньше здесь стояли только буферы, и на слабом канале / медленном CDN
+    // hls.js сдавался через стандартные 10 с: это и давало manifestLoadError
+    // и fragLoadError на первом же сегменте.
     var h = new window.Hls({
       lowLatencyMode: false,
       maxBufferLength: 30,
       maxMaxBufferLength: 60,
-      startPosition: startSec > 0 ? startSec : -1
+      manifestLoadingTimeOut: 30000,
+      manifestLoadingMaxRetry: 4,
+      manifestLoadingRetryDelay: 1000,
+      levelLoadingTimeOut: 30000,
+      levelLoadingMaxRetry: 4,
+      fragLoadingTimeOut: 60000,
+      fragLoadingMaxRetry: 6,
+      fragLoadingRetryDelay: 1000,
+      // -1 = адаптивно по скорости сети (не фиксируем 1080p: на слабом
+      // канале это гарантированный обрыв на первом сегменте)
+      startLevel: -1,
+      // Оценка скорости «на старте»: по умолчанию у hls.js 500 кбит/с,
+      // и он выбирает САМЫЙ НИЗКИЙ уровень (144p) — картинка в игре мыльная.
+      // Здесь источник — локальный прокси на этой же машине, поэтому
+      // стартуем с разумных 5 Мбит/с, а дальше ABR подстроится сам.
+      abrEwmaDefaultEstimate: 5000000,
+      // ABR поднимает уровень только если скорость выше битрейта в 1/0.7
+      // раз. На локальном прокси это лишнее торможение: поднимаем до 0.9.
+      abrBandWidthUpFactor: 0.9,
+      abrBandWidthFactor: 0.9,
+      startPosition: startSec > 0 ? startSec : -1,
     });
     h.loadSource(srcUrl);
     h.attachMedia(v);
@@ -941,7 +965,16 @@ select.pick:focus { outline: 2px solid #4d8dff; }
       fragLoadingTimeOut: 60000,          // сегмент 3 МБ на слабом канале
       fragLoadingMaxRetry: 6,
       fragLoadingRetryDelay: 1000,
-      startLevel: -1                      // сразу по скорости сети, не 1080p
+      startLevel: -1,                     // по скорости сети, не жёстко 1080p
+      // Оценка скорости «на старте»: по умолчанию у hls.js 500 кбит/с,
+      // и он выбирает САМЫЙ НИЗКИЙ уровень (144p) — картинка в игре мыльная.
+      // Здесь источник — локальный прокси на этой же машине, поэтому
+      // стартуем с разумных 5 Мбит/с, а дальше ABR подстроится сам.
+      abrEwmaDefaultEstimate: 5000000,
+      // ABR поднимает уровень только если скорость выше битрейта в 1/0.7
+      // раз. На локальном прокси это лишнее торможение: поднимаем до 0.9.
+      abrBandWidthUpFactor: 0.9,
+      abrBandWidthFactor: 0.9,
     });
     hls.loadSource(SRC);
     hls.attachMedia(v);
