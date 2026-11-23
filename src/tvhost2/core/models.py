@@ -1,0 +1,150 @@
+"""Модель данных — единственный язык, на котором говорят все модули.
+
+Зачем отдельный модуль: в v1 источники отдавали словари с разными ключами
+(`quality_files`, `variants`, `bitrates`), и прокси разбирал это через
+if/else. Здесь структура одна, и опечатка в имени поля — ошибка на этапе
+написания кода, а не в рантайме.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from enum import Enum
+
+
+class StreamKind(str, Enum):
+    """Как именно отдаётся поток — от этого зависит маршрут прокси."""
+
+    HLS = "hls"
+    """Один master-плейлист, внутри варианты качеств."""
+
+    HLS_SPLIT = "hls_split"
+    """Видео и звук отдельными плейлистами (YouTube). Прокси муксит."""
+
+    MP4 = "mp4"
+    """Прямой файл. Playwright-путь, blob-URL."""
+
+    PAGE = "page"
+    """HTML-страница с плеером; поток достаёт браузерная сессия (Kodik)."""
+
+
+class SourceState(str, Enum):
+    """Честное состояние источника — показывается во вкладке «Источники»."""
+
+    OK = "ok"
+    """Проверен, работает."""
+
+    PARTIAL = "partial"
+    """Работает с оговоркой: cookies, гео, только часть видео."""
+
+    NEEDS_COOKIES = "needs_cookies"
+    """Без cookies браузера не отдаст поток."""
+
+    BROKEN = "broken"
+    """Сломался — сайт поменял защиту. Ждёт ссылку от заказчика."""
+
+    BROWSER_ONLY = "browser_only"
+    """Только через браузерную сессию (медленно, но работает)."""
+
+
+@dataclass(frozen=True, slots=True)
+class Quality:
+    """Одна дорожка качества.
+
+    height и width раздельно — потому что вертикальные видео существуют
+    (ERR-062): у них 1080x1920, и `height=1080` без ширины даёт квадрат.
+
+    bitrate_kbps — РЕАЛЬНЫЙ (из tbr), не выдуманный. ERR-067: завышение
+    на 47% заставляло ABR навсегда остаться на 144p.
+    """
+
+    height: int
+    width: int
+    bitrate_kbps: int
+    url: str
+
+    def __post_init__(self) -> None:
+        if self.height <= 0:
+            raise ValueError(f"height должен быть > 0, получено {self.height}")
+        if self.width <= 0:
+            raise ValueError(f"width должен быть > 0, получено {self.width}")
+        if self.bitrate_kbps <= 0:
+            raise ValueError(
+                f"bitrate_kbps должен быть реальным и > 0, получено {self.bitrate_kbps}"
+            )
+        if not self.url:
+            raise ValueError("url не может быть пустым")
+
+    @property
+    def is_portrait(self) -> bool:
+        """Вертикальное видео (сторис, шортсы)."""
+        return self.height > self.width
+
+    @property
+    def label(self) -> str:
+        """Подпись для выпадающего списка качества."""
+        if self.is_portrait:
+            return f"{self.width}x{self.height} (верт.)"
+        return f"{self.height}p"
+
+
+@dataclass(frozen=True, slots=True)
+class Stream:
+    """Готовый к показу поток: одно видео, все его качества."""
+
+    source: str
+    title: str
+    kind: StreamKind
+    qualities: tuple[Quality, ...] = ()
+    headers: dict[str, str] = field(default_factory=dict)
+    duration_s: int = 0
+    is_live: bool = False
+    audio_url: str = ""
+    """Отдельная дорожка звука (YouTube). Пусто — звук внутри видео."""
+
+    state: SourceState = SourceState.OK
+
+    def __post_init__(self) -> None:
+        if not self.source:
+            raise ValueError("source не может быть пустым")
+
+    @property
+    def best(self) -> Quality | None:
+        """Лучшее качество. None — если качеств ещё нет (PAGE-поток)."""
+        return self.qualities[0] if self.qualities else None
+
+    @property
+    def worst(self) -> Quality | None:
+        """Худшее качество — старт для слабого интернета."""
+        return self.qualities[-1] if self.qualities else None
+
+    def by_height(self, height: int) -> Quality | None:
+        """Найти качество по высоте. Точное совпадение, иначе ближайшее ниже."""
+        exact = [q for q in self.qualities if q.height == height]
+        if exact:
+            return exact[0]
+        lower = [q for q in self.qualities if q.height <= height]
+        if lower:
+            return max(lower, key=lambda q: q.height)
+        return self.worst
+
+    def sorted_qualities(self) -> tuple[Quality, ...]:
+        """От лучшего к худшему — как в выпадающем списке."""
+        return tuple(sorted(self.qualities, key=lambda q: (q.height, q.bitrate_kbps), reverse=True))
+
+    @property
+    def has_audio(self) -> bool:
+        return bool(self.audio_url) or bool(self.qualities)
+
+
+def sort_qualities(items: list[Quality]) -> tuple[Quality, ...]:
+    """Отсортировать и убрать дубли по высоте (оставить лучший битрейт).
+
+    Дубли бывают реально: у VK несколько CDN-хостов на одно качество.
+    """
+    seen: dict[int, Quality] = {}
+    for q in items:
+        cur = seen.get(q.height)
+        if cur is None or q.bitrate_kbps > cur.bitrate_kbps:
+            seen[q.height] = q
+    return tuple(sorted(seen.values(), key=lambda q: (q.height, q.bitrate_kbps), reverse=True))
