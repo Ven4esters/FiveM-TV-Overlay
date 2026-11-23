@@ -7,6 +7,7 @@ from .errors import (
     NeedsCookiesError,
     NoQualitiesError,
     OverlayError,
+    RightsBlockedError,
     SourceFailedError,
 )
 from .models import Quality, SourceState, Stream, StreamKind, sort_qualities
@@ -21,6 +22,7 @@ __all__ = [
     "OverlayError",
     "Quality",
     "Registry",
+    "RightsBlockedError",
     "Source",
     "SourceFailedError",
     "SourceState",
