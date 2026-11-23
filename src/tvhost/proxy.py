@@ -1864,7 +1864,13 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(body)
+            # hls.js перезапрашивает плейлист при перемотке и смене уровня;
+            # старый запрос к этому моменту уже закрыт — это норма, а не сбой.
+            # Без перехвата такой обрыв печатал полный трейсбек в консоль.
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     @staticmethod
     def _headers_for(url: str) -> dict:
