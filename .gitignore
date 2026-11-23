@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Тесты и инструменты
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Рабочие данные программы (не часть исходников)
+videos/*.mp4
+videos/*.mkv
+videos/*.webm
+videos/*.part
+videos/overlay_history.json
+cache/
+logs/
+diag/
+
+# Сборки и архивы
+*.zip
+gta-video-host.zip
+
+# ОС и редакторы
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+
+# Секреты (никогда не коммитим)
+.env
+*.token

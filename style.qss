@@ -1,0 +1,591 @@
+/* =====================================================================
+   GTA Video Overlay — стили интерфейса
+   ---------------------------------------------------------------------
+   Правила, по которым составлен файл:
+
+   • Сетка 8 px: все отступы, высоты и ширины кратны 4 / 8 (8, 16, 24, 32).
+   • Тёмная тема не «в чёрном»: фон #101218, поверхности #171A21 / #1C2029.
+   • Текст не белый, а светло-серый: #E8E8EE, подсказки #9AA0B4.
+   • Никаких полупрозрачных подложек — только плотные цвета.
+   • Иерархия кнопок:
+       #primary   — главное действие (сплошная заливка синим)
+       #secondary — второстепенное (контур)
+       #ghost     — третьестепенное / мелкие иконки (прозрачное)
+       #pad       — кнопки пульта (прозрачные, заливка только при наведении)
+   • У каждого интерактивного элемента есть normal / hover / pressed /
+     focus / disabled.
+
+   Шрифт: Segoe UI (Windows), иначе Roboto / Inter / системный sans-serif.
+   ===================================================================== */
+
+/* ---------------------------- основа ---------------------------- */
+
+QWidget {
+    color: #E8E8EE;
+    font-family: "Segoe UI", "Roboto", "Inter", "Noto Sans", sans-serif;
+    font-size: 14px;
+}
+
+QFrame#panel {
+    background-color: #101218;
+    border: 1px solid #2A2E38;
+    border-radius: 12px;
+}
+
+/* контейнер под шапкой прозрачный — фон даёт панель.
+   ВАЖНО: не использовать «> QWidget»: кнопки тоже QWidget, и такое
+   правило перебивало их заливку (primary становился прозрачным). */
+QWidget#content {
+    background: transparent;
+}
+
+QWidget#headerBar {
+    background-color: #171A21;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+}
+
+/* карточка: плотный фон + скругление, без прозрачности */
+QFrame#card {
+    background-color: #171A21;
+    border: 1px solid #262B36;
+    border-radius: 10px;
+}
+
+/* подписи внутри карточек не должны рисовать свой фон —
+   иначе вокруг текста появляются тёмные прямоугольники */
+QLabel, QCheckBox {
+    background: transparent;
+}
+
+/* ---------------------------- текст ---------------------------- */
+
+QLabel#title {
+    color: #FFFFFF;
+    font-size: 16px;
+    font-weight: 600;
+}
+
+QLabel#sectionTitle {
+    color: #E8E8EE;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QLabel#caption {
+    color: #6E7488;
+    font-size: 11px;
+}
+
+/* подсказка под полем: может сообщать об успехе/ошибке */
+QLabel#caption[state="ok"]    { color: #5CE08A; }
+QLabel#caption[state="error"] { color: #FF6B6B; }
+
+QLabel#hint {
+    color: #9AA0B4;
+    font-size: 12px;
+}
+
+QLabel#mono {
+    color: #CBD2E4;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 13px;
+}
+
+/* состояния пульта — цвет текста вместо инлайн-стилей */
+QLabel#hint[state="ok"]     { color: #5CE08A; }
+QLabel#hint[state="warn"]   { color: #E8C05C; }
+QLabel#hint[state="error"]  { color: #FF6B6B; }
+QLabel#hint[state="idle"]   { color: #9AA0B4; }
+
+/* бейдж состояния прокси в шапке — «пилюля» с фоном */
+QLabel#badge {
+    background-color: #1B3A28;
+    color: #5CE08A;
+    border: 1px solid #2C5A3E;
+    border-radius: 10px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+QLabel#badge[state="idle"] {
+    background-color: #1C2029;
+    color: #9AA0B4;
+    border-color: #2A2E38;
+}
+
+QLabel#badge[state="error"] {
+    background-color: #3A1F22;
+    color: #FF6B6B;
+    border-color: #5A2C31;
+}
+
+QLabel#badge[state="warn"] {
+    background-color: #3A321C;
+    color: #E8C05C;
+    border-color: #5A4C2C;
+}
+
+/* совсем тусклая подпись (пояснение рядом с заголовком) */
+QLabel#faint {
+    color: #6E7488;
+    font-size: 11px;
+}
+
+/* тонкий разделитель между заголовком и пояснением */
+QFrame#vdivider {
+    background-color: #2A2E38;
+    border: none;
+}
+
+/* ------------------------ поля ввода ------------------------ */
+
+QLineEdit, QComboBox, QSpinBox {
+    background-color: #1C2029;
+    color: #E8E8EE;
+    border: 1px solid #39404F;
+    border-radius: 6px;
+    padding: 8px 12px;
+    min-height: 24px;
+    selection-background-color: #4D8DFF;
+    selection-color: #FFFFFF;
+}
+
+QLineEdit:hover, QComboBox:hover {
+    border-color: #4A5468;
+}
+
+QLineEdit:focus, QComboBox:focus {
+    border: 1px solid #4D8DFF;
+}
+
+QLineEdit:disabled, QComboBox:disabled {
+    background-color: #171A21;
+    color: #6B6B6B;
+    border-color: #2A2E38;
+}
+
+/* поле готовой ссылки: единый контейнер «поле + кнопки справа».
+   Рамка одна на всю группу — выглядит как одно поле. */
+QFrame#fieldGroup {
+    background-color: #232326;
+    border: 1px solid #39404F;
+    border-radius: 6px;
+}
+
+QFrame#fieldGroup:hover { border-color: #4A5468; }
+
+QLineEdit#outField {
+    background-color: transparent;
+    border: none;
+    color: #CBD2E4;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 13px;
+    padding: 8px 12px;
+}
+
+QLineEdit#outField:focus { border: none; }
+
+QLineEdit[readOnly="true"] {
+    background-color: #171A21;
+    border-color: #39404F;
+    color: #CBD2E4;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox::down-arrow {
+    image: url(@ICONS@/chevron.svg);
+    width: 16px;
+    height: 16px;
+    margin-right: 6px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #1C2029;
+    color: #E8E8EE;
+    border: 1px solid #39404F;
+    border-radius: 6px;
+    padding: 4px;
+    selection-background-color: #4D8DFF;
+    selection-color: #FFFFFF;
+    outline: none;
+}
+
+/* ---------------------------- кнопки ---------------------------- */
+
+/* PRIMARY — главное действие: сплошная заливка */
+QPushButton#primary {
+    background-color: #4D8DFF;
+    color: #FFFFFF;
+    border: 1px solid #4D8DFF;
+    border-radius: 6px;
+    padding: 8px 16px;
+    min-height: 22px;
+    max-height: 22px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+QPushButton#primary:hover  { background-color: #64A0FF; border-color: #64A0FF; }
+QPushButton#primary:pressed { background-color: #3C78E6; border-color: #3C78E6; }
+QPushButton#primary:focus  {
+    background-color: #4D8DFF;
+    border: 1px solid #A9C8FF;
+}
+QPushButton#primary:disabled {
+    background-color: #232B3A;
+    border-color: #232B3A;
+    color: #5A6478;
+}
+
+/* SECONDARY — второстепенное действие: контур */
+QPushButton#secondary {
+    background-color: transparent;
+    color: #CBD9F5;
+    border: 1px solid #39404F;
+    border-radius: 6px;
+    padding: 8px 16px;
+    min-height: 22px;
+    max-height: 22px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+QPushButton#secondary:hover {
+    background-color: #1E2431;
+    border-color: #556180;
+    color: #EAF1FF;
+}
+
+QPushButton#secondary:pressed { background-color: #2C3547; }
+QPushButton#secondary:focus   {
+    background-color: transparent;
+    border: 1px solid #4D8DFF;
+}
+QPushButton#secondary:disabled {
+    color: #6B6B6B;
+    border-color: #2A2E38;
+}
+
+/* GHOST — мелкие служебные кнопки (перезапуск, свернуть, закрыть) */
+QPushButton#ghost {
+    background-color: transparent;
+    color: #9AA0B4;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 13px;
+    min-height: 24px;
+}
+
+QPushButton#ghost:hover {
+    background-color: #1C2029;
+    color: #E8E8EE;
+}
+
+QPushButton#ghost:pressed { background-color: #383838; }
+QPushButton#ghost:focus   { border: 1px solid #4D8DFF; }
+
+/* закрыть — единственная «опасная» кнопка */
+QPushButton#danger {
+    background-color: transparent;
+    color: #9AA0B4;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 4px 8px;
+    min-height: 20px;
+    font-size: 13px;
+}
+
+QPushButton#danger:hover   { background-color: #C0392B; color: #FFFFFF; }
+QPushButton#danger:pressed { background-color: #96281B; }
+
+/* PAD — кнопки пульта: прозрачные, отклик только при наведении */
+QPushButton#pad {
+    background-color: transparent;
+    color: #E8E8EE;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 0;
+    font-size: 18px;
+    min-width: 46px;
+    max-width: 46px;
+    min-height: 46px;
+    max-height: 46px;
+}
+
+QPushButton#pad:hover {
+    background-color: #1C2029;
+    border-color: #39404F;
+    color: #FFFFFF;
+}
+
+QPushButton#pad:pressed { background-color: #2C3140; }
+QPushButton#pad:focus   { border: 1px solid #4D8DFF; }
+
+QPushButton#pad:disabled {
+    color: #5A6478;
+    background-color: transparent;
+    border-color: transparent;
+}
+
+/* «Стоп»: обычный вид, но при наведении краснеет —
+   так он читается как «остановить», а не как «записать» */
+QPushButton#padStop {
+    background-color: transparent;
+    color: #E8E8EE;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    padding: 0;
+    font-size: 18px;
+    min-width: 46px;
+    max-width: 46px;
+    min-height: 46px;
+    max-height: 46px;
+}
+
+QPushButton#padStop:hover {
+    background-color: #3A1F22;
+    border-color: #5A2C31;
+    color: #FF6B6B;
+}
+
+QPushButton#padStop:pressed { background-color: #4A2529; }
+QPushButton#padStop:focus   { border: 1px solid #4D8DFF; }
+QPushButton#padStop:disabled { color: #5A6478; }
+
+/* включённый режим (субтитры, полный экран) — активная заливка */
+QPushButton#pad[active="true"] {
+    background-color: #25395C;
+    border-color: #4D8DFF;
+    color: #FFFFFF;
+}
+
+/* главная кнопка пульта «плей/пуст» — чуть заметнее по размеру */
+QPushButton#pad[accent="true"] {
+    min-width: 54px;
+    max-width: 54px;
+    min-height: 54px;
+    max-height: 54px;
+    font-size: 20px;
+}
+
+/* кнопка копирования внутри поля — прижата к правому краю */
+QPushButton#inlineCopy {
+    background-color: transparent;
+    color: #9AA0B4;
+    border: none;
+    border-left: 1px solid #2A2E38;
+    border-radius: 0;
+    padding: 0;
+    margin: 4px 0;
+    min-width: 40px;
+    font-size: 14px;
+}
+
+QPushButton#inlineCopy:last-child {
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
+}
+
+QPushButton#inlineCopy:hover   { background-color: #2C3140; color: #FFFFFF; }
+QPushButton#inlineCopy:pressed { background-color: #39404F; }
+
+/* ---------------------------- списки ---------------------------- */
+
+QListWidget {
+    background-color: #171A21;
+    color: #C8CFE0;
+    border: 1px solid #2A2E38;
+    border-radius: 6px;
+    font-size: 13px;
+    padding: 4px;
+    outline: none;
+}
+
+QListWidget::item {
+    padding: 8px 8px;
+    border-radius: 4px;
+}
+
+QListWidget::item:hover    { background-color: #232733; }
+QListWidget::item:selected {
+    background-color: #25395C;
+    color: #FFFFFF;
+}
+
+/* ------------------------- слайдеры ------------------------- */
+
+QSlider::groove:horizontal {
+    background-color: #39404F;
+    height: 4px;
+    border-radius: 2px;
+}
+
+QSlider::sub-page:horizontal {
+    background-color: #4D8DFF;
+    height: 4px;
+    border-radius: 2px;
+}
+
+QSlider::handle:horizontal {
+    background-color: #E8E8EE;
+    width: 12px;
+    height: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
+}
+
+QSlider::handle:horizontal:hover { background-color: #FFFFFF; }
+
+QSlider::handle:horizontal:disabled { background-color: #5A6478; }
+
+QSlider::sub-page:horizontal:disabled { background-color: #4A5468; }
+
+/* ------------------------- чекбоксы ------------------------- */
+
+QCheckBox {
+    color: #CBD2E4;
+    font-size: 13px;
+    spacing: 8px;
+    background: transparent;
+}
+
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+    border: 1px solid #39404F;
+    border-radius: 4px;
+    background-color: #1C2029;
+}
+
+QCheckBox::indicator:hover   { border-color: #556180; }
+QCheckBox::indicator:checked {
+    background-color: #4D8DFF;
+    border-color: #4D8DFF;
+}
+
+QCheckBox::indicator:disabled {
+    background-color: #171A21;
+    border-color: #2A2E38;
+}
+
+/* --------------------- встроенная панель сообщений --------------------- */
+
+QFrame#infoBar            { background-color: #171A21; border: 1px solid #39404F;
+                            border-radius: 8px; }
+QFrame#infoBar[kind="info"]    { border-color: #4D8DFF; }
+QFrame#infoBar[kind="warn"]    { border-color: #E8C05C; }
+QFrame#infoBar[kind="error"]   { border-color: #FF6B6B; }
+QFrame#infoBar[kind="success"] { border-color: #5CE08A; }
+
+QLabel#infoText[kind="info"]    { color: #CFE0FF; }
+QLabel#infoText[kind="warn"]    { color: #FFE9B8; }
+QLabel#infoText[kind="error"]   { color: #FFD0D0; }
+QLabel#infoText[kind="success"] { color: #C9FFDD; }
+
+/* ------------------------- окно подсказок -------------------------
+   Отдельное окно (NoteWindow): своя панель, шапка и прокрутка.
+   Нужно, чтобы длинные подсказки читались целиком. */
+
+QWidget#noteWindow {
+    background-color: #101218;
+    border: 1px solid #2A2E38;
+    border-radius: 12px;
+}
+
+QWidget#noteWindow QFrame#headerBar {
+    background-color: #171A21;
+    border-bottom: 1px solid #262B36;
+    border-top-left-radius: 12px;
+    border-top-right-radius: 12px;
+}
+
+QWidget#noteWindow QFrame#headerBar[kind="error"] { border-bottom-color: #6B2B2B; }
+QWidget#noteWindow QFrame#headerBar[kind="warn"]  { border-bottom-color: #6B5A2B; }
+QWidget#noteWindow QFrame#headerBar[kind="success"] { border-bottom-color: #2C5A3E; }
+
+QLabel#noteIcon { background: transparent; }
+
+QLabel#headerTitle {
+    font-size: 14px;
+    font-weight: 600;
+    color: #E8E8EE;
+}
+
+QScrollArea#noteScroll {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#noteScroll > QWidget > QWidget {
+    background: transparent;
+}
+
+QWidget#infoText, QLabel#infoText {
+    background: transparent;
+    color: #D6DAE6;
+    font-size: 13px;
+}
+
+QLabel#infoText[kind="error"]   { color: #FFD0D0; }
+QLabel#infoText[kind="warn"]    { color: #FFE9B8; }
+QLabel#infoText[kind="success"] { color: #C9FFDD; }
+QLabel#infoText[kind="info"]    { color: #CFE0FF; }
+
+/* ------------------------- прокрутка ------------------------- */
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 8px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #39404F;
+    border-radius: 4px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover { background-color: #4A5468; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+
+QScrollBar:horizontal {
+    background: transparent;
+    height: 8px;
+    margin: 0;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #39404F;
+    border-radius: 4px;
+    min-width: 24px;
+}
+
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: none; }
+
+/* --------------------------- подсказки --------------------------- */
+
+QToolTip {
+    background-color: #1C2029;
+    color: #E8E8EE;
+    border: 1px solid #39404F;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+}
+
+/* ------------------------- разделитель ------------------------- */
+
+QFrame#divider {
+    background-color: #2A2E38;
+    max-height: 1px;
+    border: none;
+}
