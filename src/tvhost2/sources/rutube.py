@@ -24,6 +24,9 @@ from ..core.errors import RightsBlockedError
 from ..core.models import Quality, SourceState, Stream, StreamKind
 from .base import YtDlpSource, extract_info, pick_hls_qualities
 
+RU_COUNTRIES = {"RU", "BY", "KZ", "AM", "KG", "MD", "AZ", "GE", "UZ", "TJ"}
+"""Страны, для которых Rutube ограничивает показ реже всего."""
+
 log = logging.getLogger(__name__)
 
 _HASH_RE = re.compile(r"(?:video|embed)/([0-9a-f]{32})", re.IGNORECASE)
@@ -75,8 +78,10 @@ class RutubeSource(YtDlpSource):
         """
         try:
             return super().resolve(url)
-        except RightsBlockedError:
-            raise  # понятная причина уже есть — embed не поможет
+        except RightsBlockedError as exc:
+            # Правообладатель назвал причину — embed её не обойдёт.
+            log.info("Rutube: показ ограничен для этой сети (%s)", exc.why)
+            raise
         except Exception:
             vid = video_id(url)
             if not vid or "play/embed" in url:

@@ -216,7 +216,15 @@ class TestRightsBlocked:
 
         text = RightsBlockedError("Rutube", "ограничено РФ").user_text()
         assert "правообладатель" in text
-        assert "России" in text
+        assert "в браузере" in text, "должно быть понятно, как проверить самому"
+
+    def test_exact_text_from_site_is_shown_when_available(self) -> None:
+        """Rutube сам пишет причину — показываем её, а не своё предположение."""
+        from tvhost2.core import RightsBlockedError
+
+        site_text = "Видео недоступно по решению правообладателя или у вас включён VPN"
+        text = RightsBlockedError("Rutube", detail_text=site_text).user_text()
+        assert site_text in text
 
     def test_404_from_rutube_is_rights_block(self) -> None:
         """yt-dlp на скрытом видео отдаёт 404, а не blocking_rule."""
