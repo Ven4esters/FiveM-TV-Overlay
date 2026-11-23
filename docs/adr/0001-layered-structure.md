@@ -39,8 +39,9 @@ HTTP-сервер, 30 маршрутов в одном методе и разб�
 **Плохо:**
 - импорты стали длиннее (`from ..infra import sources`);
 - при переносе модулей легко сломать импорт — ловится в CI сразу;
-- старые `.bat`-файлы должны запускать `python -m tvhost.proxy`, а не
-  `python proxy.py` — обновлено в `start.bat`.
+- все точки входа запускаются как модули: `python -m tvhost.proxy`,
+  `python -m tvhost.core.download` (и `.bat`-ярлыки, и `ProxyController`);
+  проверяется тестом `tests/test_entrypoints.py`.
 
 ## Альтернативы
 

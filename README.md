@@ -6,11 +6,13 @@
 
 ## 🔗 ВИДЕО ИЗ ИНТЕРНЕТ, А НЕ С ВАШЕГО УСТРОЙСТВА
 
-Если надо показать чужое видео (YouTube, сайт, NASA, архив) — используйте **`proxy.py`**:
+Если надо показать чужое видео (YouTube, сайт, NASA, архив) — используйте
+**локальный прокси** (модуль `tvhost.proxy`):
 
 ```bash
 pip install yt-dlp
-python proxy.py
+set PYTHONPATH=src
+python -m tvhost.proxy
 ```
 
 Затем вставляйте в игру ссылку с префиксом:
@@ -36,7 +38,7 @@ python proxy.py
 ### Готовые легальные ссылки (NASA, Wikimedia, Archive)
 
 ```bash
-python free_videos.py --check
+python -m tvhost.core.free_videos --check
 ```
 Показывает список прямых ссылок на public domain / CC-видео и проверяет, что они живые.
 
@@ -48,7 +50,7 @@ python free_videos.py --check
 pip install yt-dlp
 yt-dlp -f "best[ext=mp4][height<=720]" "https://www.youtube.com/watch?v=XXXX"
 # или с автоподготовкой под GitHub:
-python download_and_prepare.py "ССЫЛКА" --for-github
+python -m tvhost.core.download "ССЫЛКА" --for-github
 ```
 
 ---
@@ -86,10 +88,10 @@ python download_and_prepare.py "ССЫЛКА" --for-github
 ```bash
 # 1. Положите видео в папку videos/  (mp4 или webm)
 # 2. Запустите:
-python server.py
+python -m tvhost.server
 
 # Или с параметрами:
-python server.py --port 8000 --dir ./videos
+python -m tvhost.server --port 8000 --dir ./videos
 ```
 
 Сервер напечатает адреса. Откройте в игре:
@@ -170,7 +172,7 @@ ngrok http 8000
 
 ```bash
 pip install yt-dlp
-python download_and_prepare.py "https://www.youtube.com/watch?v=XXXX" --for-github
+python -m tvhost.core.download "https://www.youtube.com/watch?v=XXXX" --for-github
 ```
 
 Скрипт скачает лучший MP4 ≤720p (H.264+AAC — идеально для CEF), а если файл больше 90 МБ — сожмёт через ffmpeg до 720p с `+faststart` и положит результат в `videos/`.
@@ -213,7 +215,7 @@ pip install yt-dlp
 yt-dlp -f "best[ext=mp4][height<=720]" -o "%(title)s.%(ext)s" "ССЫЛКА"
 
 # или через готовый скрипт:
-python download_and_prepare.py "ССЫЛКА"
+python -m tvhost.core.download "ССЫЛКА"
 ```
 
 Затем либо раздавайте через `server.py` (ссылка `http://127.0.0.1:8000/...`), либо кладите в `scripts/WreckDTV/videos/` — WreckDTV подхватит сам (webm надёжнее mp4 в этом моде).

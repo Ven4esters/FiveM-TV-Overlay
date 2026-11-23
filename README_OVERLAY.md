@@ -484,13 +484,15 @@ https://kalarona.org/s/FEblpk2WGjWNsdhDyVtOQg/1795425119/330274/index.m3u8
 
 - «Скачать и раздать через /local» убрано из подсказок — этот способ больше
   не предлагается, потому что он и забивал диск;
-- появился отдельный файл `cleanup.py` — чистит кэш и временные профили;
+- появился отдельный модуль `tvhost.infra.cleanup` — чистит кэш и временные
+  профили;
 - приложение при старте удаляет из кэша файлы старше суток.
 
 Запуск очистки вручную:
 
 ```bat
-python cleanup.py
+set PYTHONPATH=src
+python -m tvhost.infra.cleanup
 ```
 
 ---
@@ -1180,7 +1182,7 @@ hls.js доигрывает буфер старого качества — ин�
 
 - Оверлей: запустите `run_console.bat` — откроется консоль с логами.
 - Прокси: автоматически пишется в **`proxy.log`**. Кликните по статусу в панели, чтобы посмотреть последние строки.
-- Прокси запускается оверлеем автоматически; для отдельной диагностики: `.venv\Scripts\python.exe proxy.py`
+- Прокси запускается оверлеем автоматически; для отдельной диагностики: `run_console.bat` или `set PYTHONPATH=src` + `.venv\Scripts\python.exe -m tvhost.proxy`
 - Кеш: `videos/cache/` — какие файлы уже скачаны.
 
 ---
@@ -1210,17 +1212,20 @@ hls.js доигрывает буфер старого качества — ин�
 # Активировать окружение
 .venv\Scripts\activate
 
+# Код лежит в src/tvhost — без этого Python не найдёт пакет
+set PYTHONPATH=src
+
 # Прокси
-python proxy.py --port 9000
+python -m tvhost.proxy --port 9000
 
 # Демо-видео (проверка, что всё работает)
-python free_videos.py --check
+python -m tvhost.core.free_videos --check
 
 # Скачать видео для локальной раздачи
-python download_and_prepare.py "https://www.youtube.com/watch?v=XXXX"
+python -m tvhost.core.download "https://www.youtube.com/watch?v=XXXX"
 
 # Локальный сервер для готовых файлов
-python server.py --port 8000
+python -m tvhost.server --port 8000
 
 # Управление по HTTP (то же, что делают кнопки оверлея)
 curl "http://127.0.0.1:9000/control/<sid>?cmd=toggle"

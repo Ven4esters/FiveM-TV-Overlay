@@ -83,6 +83,54 @@ class TestHumanSize:
         assert cleanup._human(-1)
 
 
+class TestCleanupPaths:
+    """Уборщик смотрит в папку проекта, а не внутрь пакета (ERR-059).
+
+    Пока BASE_DIR указывал на src/tvhost/infra, cleanup искал videos/cache
+    внутри пакета, не находил и молча ничего не чистил — автoочистка при
+    старте прокси не работала вовсе.
+    """
+
+    def test_cache_dirs_point_to_project_root(self):
+        from pathlib import Path
+
+        project_root = Path(__file__).resolve().parents[1]
+        for path in cleanup.CACHE_DIRS:
+            got = Path(path).resolve()
+            assert got.parent.parent == project_root.resolve(), (
+                f"уборщик смотрит в {got}, а должен в <корень проекта>/videos/*"
+            )
+            assert got.name in {"cache", "tmp"}
+
+    def test_base_dir_is_not_inside_package(self):
+        from pathlib import Path
+
+        base = Path(cleanup.BASE_DIR).resolve()
+        assert base.name != "infra", f"BASE_DIR всё ещё указывает на пакет: {base}"
+        assert (base / "src" / "tvhost").is_dir(), f"BASE_DIR не корень проекта: {base}"
+
+    def test_dry_run_finds_files_in_given_dir(self, tmp_path, monkeypatch):
+        """--dry-run видит файлы и ничего не удаляет."""
+        import os
+        import time
+
+        cache_dir = tmp_path / "videos" / "cache"
+        cache_dir.mkdir(parents=True)
+        old_file = cache_dir / "old.mp4"
+        old_file.write_bytes(b"x" * 100)
+        # делаем файл старым на 10 дней
+        past = time.time() - 10 * 86400
+        os.utime(old_file, (past, past))
+
+        monkeypatch.setattr(cleanup, "CACHE_DIRS", [str(cache_dir)])
+        found = cleanup._cache_files(max_age_days=1)
+        assert any(p == str(old_file) for p, _s, _a in found)
+
+        freed = cleanup.cleanup(max_age_days=1, dry_run=True)
+        assert freed > 0, "dry-run должен посчитать освобождаемые байты"
+        assert old_file.exists(), "dry-run не имеет права удалять файлы"
+
+
 class TestCachePath:
     """Путь к файлу кеша строится только для существующего файла."""
 

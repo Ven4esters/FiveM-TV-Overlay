@@ -4,10 +4,10 @@
 Зачем: при раздаче видео через скачивание в videos/cache/ оставались
 готовые файлы (фильм — это 4 ГБ), и папка раздувалась незаметно.
 
-Запуск:
-    python cleanup.py            — почистить и показать, сколько освободилось
-    python cleanup.py --dry-run  — только показать, что будет удалено
-    python cleanup.py --days 3   — удалять файлы старше 3 дней (по умолчанию 1)
+Запуск (из корня проекта, где лежит папка videos/):
+    python -m tvhost.infra.cleanup            — почистить и показать результат
+    python -m tvhost.infra.cleanup --dry-run  — только показать, что удалится
+    python -m tvhost.infra.cleanup --days 3   — старше 3 дней (по умолчанию 1)
 """
 
 from __future__ import annotations
@@ -18,8 +18,12 @@ import shutil
 import sys
 import tempfile
 import time
+from pathlib import Path
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# Корень проекта, а не папка модуля: раньше здесь был путь к
+# src/tvhost/infra, поэтому уборщик искал videos/cache внутри пакета,
+# ничего не находил и молча не чистил (ERR-059).
+BASE_DIR = str(Path(__file__).resolve().parents[3])
 CACHE_DIRS = [
     os.path.join(BASE_DIR, "videos", "cache"),  # скачанные видео
     os.path.join(BASE_DIR, "videos", "tmp"),  # временные вырезки
