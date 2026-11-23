@@ -821,16 +821,29 @@ class ProxyHandler(BaseHTTPRequestHandler):
         path, qs = parsed.path, urllib.parse.parse_qs(parsed.query)
         target = (qs.get("url") or [""])[0] or ""
 
-        for route in self._routes(path):
-            handled = route(path, qs, target)
-            if handled is not None:
-                return handled
-
-        self._send_text(
-            404,
-            "<h3>404</h3><p>Маршруты: / , /yt?url= , /r?url= , /get?url= , "
-            "/p/&lt;id&gt; , /resolve , /list</p>",
-        )
+        # Таблица отдаёт РОВНО ОДИН обработчик (или None, если адрес не наш).
+        #
+        # Раньше здесь был цикл, считавший None признаком «маршрут не подошёл».
+        # Но обработчики возвращают None, УЖЕ отправив ответ (_send_text и др.),
+        # поэтому каждый запрос получал второй ответ — 404 поверх нормального
+        # (в журнале видно пары «200», «404» на один GET). Ответ уже отправлен,
+        # повторный ломает соединение и путает плеер.
+        handler = self._routes(path)
+        if handler is None:
+            return self._send_text(
+                404,
+                "<h3>404</h3><p>Маршруты: / , /yt?url= , /r?url= , /get?url= , "
+                "/p/&lt;id&gt; , /resolve , /list</p>",
+            )
+        # Обработчик вернул False — значит, адрес подошёл по форме,
+        # но не опознан внутри (например, /p/<id> с неизвестным id).
+        if handler(path, qs, target) is False:
+            return self._send_text(
+                404,
+                "<h3>404</h3><p>Маршруты: / , /yt?url= , /r?url= , /get?url= , "
+                "/p/&lt;id&gt; , /resolve , /list</p>",
+            )
+        return None
 
     def _routes(self, path: str):
         """
@@ -866,7 +879,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             "/get": self._route_api,
         }
         if path in exact:
-            return (exact[path],)
+            return exact[path]
 
         prefixes = (
             ("/player/", self._route_player_page),
@@ -881,9 +894,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         )
         for prefix, handler in prefixes:
             if path.startswith(prefix):
-                return (handler,)
+                return handler
 
-        return (self._route_short_link,)
+        return self._route_short_link
 
     def _route_index(self, path: str, qs: dict, target):
         """1) корень — оглавление"""
@@ -1072,7 +1085,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
         """1д3) постоянная ссылка: /v/<id>.mp4 — отдаёт локальный файл"""
         pid = urllib.parse.unquote(path[len("/v/") :]).strip("/")
         if pins.serve_partial(self, pid):
-            return
+            return True  # файл уже отдан (200/206/416)
         rec = pins.get(pid.split(".")[0])
         if rec and rec.get("state") == "downloading":
             pins.prepare(rec["id"])
@@ -1175,7 +1188,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
-            return
+            return True  # плейлист уже отправлен
 
     def _route_twitch_master(self, path: str, qs: dict, target):
         """1е2б) Twitch: master-плейлист (стрим, VOD, клип)"""
@@ -1247,6 +1260,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             if not url:
                 return self._send_text(404, "<h3>Ссылка не найдена</h3>")
             return self._handle_resolve(url, short=True)
+        return False  # это не /p/<id> — адрес не наш
 
     def _route_api(self, path: str, qs: dict, target):
         """API: /resolve, /list, /yt, /get, /r — разные действия по адресу."""
