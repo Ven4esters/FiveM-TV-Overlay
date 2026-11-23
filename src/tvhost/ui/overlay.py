@@ -138,17 +138,6 @@ def save_history(items: list[dict]) -> None:
     HISTORY_PATH.write_text(json.dumps(items[:HISTORY_MAX], ensure_ascii=False, indent=1), "utf-8")
 
 
-def local_ip() -> str:
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except OSError:
-        return "127.0.0.1"
-
-
 def port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.2)
@@ -769,8 +758,8 @@ class Overlay(QWidget):
         self.cmb_mode.setVisible(False)  # скрыт: режим ставится автоматически
 
         # ---------------- действия ----------------
-        # Главное действие — «Открыть на ТВ» (Primary, заливка).
-        # Второстепенное — «Из моего браузера» (Secondary, контур).
+        # Главное и единственное действие — «Открыть на ТВ» (Primary, заливка).
+        # Кнопки «Из моего браузера» нет: удалена по запросу, вместе с кодом.
         actions_row = QHBoxLayout()
         actions_row.setSpacing(8)
 
@@ -1266,25 +1255,6 @@ class Overlay(QWidget):
             self.cmb_mode.setCurrentIndex(idx)
         return mode
 
-    def _make_direct(self) -> None:
-        url = self.inp_url.text().strip()
-        if not url:
-            return
-        if not url.startswith(("http://", "https://")):
-            url = "https://" + url
-        mode = self._apply_mode()
-        encoded = urllib.parse.quote(url, safe="")
-        direct = f"{self._base_url()}/{mode}?url={encoded}"
-        self.current_direct = direct
-        self.lbl_out.setText(direct)
-
-        # сохранить в историю
-        title = url[:70] + ("…" if len(url) > 70 else "")
-        self.history.insert(0, {"url": url, "direct": direct, "mode": mode, "title": title})
-        self.history = self.history[:HISTORY_MAX]
-        save_history(self.history)
-        self._apply_history()
-
     def _direct_for(self, h: dict) -> str:
         """Собрать прямую ссылку по текущему порту прокси (порт мог смениться)."""
         url = h.get("url", "")
@@ -1397,14 +1367,6 @@ class Overlay(QWidget):
             QApplication.beep()
             self._flash("Скопировано!")
 
-    def _copy_item(self, item: QListWidgetItem) -> None:
-        direct = item.data(Qt.ItemDataRole.UserRole)
-        if direct:
-            QApplication.clipboard().setText(direct)
-            self.current_direct = direct
-            self.lbl_out.setText(direct)
-            self._flash("Скопировано из истории!")
-
     def _flash(self, text: str) -> None:
         """Короткое подтверждение — не затирая саму ссылку в поле."""
         self.lbl_url_hint.setText(f"●  {text}")
@@ -1470,38 +1432,6 @@ class Overlay(QWidget):
     # ------------------------------------------------------------------
     #        ЗАКРЕПЛЕНИЕ ССЫЛОК (постоянные ссылки вместо «сессионных»)
     # ------------------------------------------------------------------
-    def _pin_stream(self, src) -> None:
-        """
-        Сделать из потока постоянную ссылку.
-
-        Принимает URL (из окна выбора) или элемент списка закреплённых.
-        Если поток пришёл из браузера — у него уже сохранены заголовки и
-        cookie (см. /catch). Прокси скачает файл к себе, а мы запомним
-        короткую ссылку /v/<id>.mp4 — она не протухает.
-        """
-        if src is None:
-            self.show_info(
-                "Сначала поймайте поток кнопкой «Из моего браузера».",
-                kind="info",
-                title="Закрепление ссылки",
-            )
-            return
-        if not isinstance(src, str):  # элемент QListWidget
-            src = src.data(Qt.ItemDataRole.UserRole) or ""
-        if not src:
-            return
-
-        def worker() -> None:
-            try:
-                q = urllib.parse.urlencode({"url": src})
-                with urllib.request.urlopen(f"{self._base_url()}/pin?{q}", timeout=30) as r:
-                    data = json.loads(r.read().decode("utf-8"))
-                self.pin_signal.emit(data)
-            except Exception as e:
-                self.pin_signal.emit({"ok": False, "error": str(e)})
-
-        threading.Thread(target=worker, daemon=True).start()
-
     def _pin_done(self, data: dict) -> None:
         if not data.get("ok"):
             self.show_info(
@@ -1685,11 +1615,6 @@ class Overlay(QWidget):
             flags = self.windowFlags()
             self.setWindowFlags(flags | Qt.WindowType.WindowStaysOnTopHint)
             self.show()
-
-    def _copy_info_text(self) -> None:
-        text = getattr(self, "_info_text", "")
-        if text:
-            QApplication.clipboard().setText(text)
 
     def _retry_last(self) -> None:
         self.info_bar.setVisible(False)

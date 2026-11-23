@@ -90,17 +90,6 @@ def _fix_argv() -> None:
         pass
 
 
-def safe_print(*args, **kwargs) -> None:
-    """print(), который никогда не падает из-за кодировки."""
-    try:
-        print(*args, **kwargs)
-    except UnicodeEncodeError:
-        text = " ".join(str(a) for a in args)
-        enc = getattr(sys.stdout, "encoding", None) or "ascii"
-        cleaned = text.encode(enc, errors="replace").decode(enc, errors="replace")
-        print(cleaned, **kwargs)
-
-
 # применяем сразу при импорте — это самый надёжный вариант
 make_safe()
 

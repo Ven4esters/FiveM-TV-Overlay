@@ -5,14 +5,13 @@
     GET /v/<id>.mp4   — прямой файл (Range поддерживается)
 
 Публичный API (используется proxy.py):
-    cache.get_or_fetch(url: str) -> str            # имя локального файла
-    cache.ensure_async(url: str) -> None           # качая в фоне
-    cache.is_cached(url: str) -> bool
-    cache.pathy_for(name: str) -> Path | None
+    cache.get_or_fetch(url, progress=None) -> Path   # скачать и вернуть путь
+    cache.ensure_async(url: str) -> None             # качать в фоне
+    cache.is_cached(url: str) -> bool                # уже скачано?
+    cache.pathy_for(name: str) -> Path | None        # найти по имени
 
-Использование отдельно (как CLI):
-    python cache.py "https://googlevideo.com/videoplayback?..."
-    python cache.py --serve          # поднять сервер кеша на порту 8001
+Запускается только как часть пакета (python -m tvhost.proxy).
+Своей командной строки у модуля нет.
 """
 
 from __future__ import annotations
@@ -202,24 +201,3 @@ def ensure_async(url: str) -> None:
                 _inflight.discard(base)
 
     threading.Thread(target=worker, daemon=True).start()
-
-
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("usage: python cache.py <url> | python cache.py --serve")
-        sys.exit(1)
-
-    if sys.argv[1] == "--serve":
-        sys.path.insert(0, str(Path(__file__).parent))
-        from server import main as server_main  # переиспользуем готовый Range-сервер
-
-        sys.argv = [sys.argv[0], "--port", "8001", "--dir", str(CACHE_DIR)]
-        server_main()
-    else:
-        target = sys.argv[1]
-        print(f"Скачиваю: {target[:80]}...")
-        path = get_or_fetch(
-            target,
-            progress=lambda n: print(f"\r  {n / 1024 / 1024:.1f} МБ", end="", flush=True),
-        )
-        print(f"\n✅ Готово: {path}")

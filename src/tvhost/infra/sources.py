@@ -39,10 +39,6 @@ _CACHE: dict[str, tuple[float, object]] = {}
 _CACHE_TTL = 180.0
 
 
-def clear_cache() -> None:
-    _CACHE.clear()
-
-
 def _cached(key: str, build):
     """Взять из кеша или построить заново."""
     import time as _time
@@ -943,70 +939,6 @@ def _kodik_streams_uncached(
     return None
 
 
-def _kodik_streams_uncached_old(player_url: str, translation_id: int | None = None) -> dict | None:
-    info = _kodik_page(player_url)
-    if not info:
-        return None
-    tid = translation_id if translation_id is not None else info["translation_id"]
-
-    # Если выбрана другая озвучка — берём её собственные id и хеш
-    media_id = info["id"]
-    media_hash = info["hash"]
-    tr_title = info["translation"]
-    if translation_id is not None and translation_id != info["translation_id"]:
-        for tr in kodik_translations(player_url):
-            if tr["id"] == translation_id:
-                media_id, media_hash, tr_title = tr["media_id"], tr["hash"], tr["title"]
-                break
-
-    form = {
-        "type": info["type"],
-        "hash": media_hash,
-        "id": media_id,
-        "ids": media_id,
-        "translationId": str(tid),
-        "urlParams": info["urlParams"],
-        "badUser": "false",
-        "isCdn": "false",
-    }
-    host = info["host"]
-    code, body, _ = _get(
-        f"https://{host}/ftor",
-        {
-            "Origin": f"https://{host}",
-            "Referer": f"https://{host}/",
-            "X-Requested-With": "XMLHttpRequest",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        urllib.parse.urlencode(form).encode(),
-    )
-    if code != 200:
-        return None
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError:
-        return None
-
-    qualities: dict[int, str] = {}
-    for q, items in (data.get("links") or {}).items():
-        if not isinstance(items, list) or not items:
-            continue
-        try:
-            qn = int(q)
-        except ValueError:
-            continue
-        url = decode_src(items[0].get("src") or "")
-        if url:
-            qualities[qn] = url
-    if not qualities:
-        return None
-    return {
-        "qualities": dict(sorted(qualities.items(), reverse=True)),
-        "translation": tr_title,
-        "translation_id": tid,
-    }
-
-
 def _real_height(url: str, claimed: int) -> int:
     """
     Настоящее качество потока по его адресу.
@@ -1550,39 +1482,6 @@ def _queue_iframes(
         sub_url = _absolutize(base, match.group(1))
         if sub_url and sub_url not in visited:
             queue.append((sub_url, depth + 1))
-
-
-def probe_stream(url: str, referer: str = "", timeout: int = 6) -> dict:
-    """
-    Проверить, живой ли поток (как браузер перед воспроизведением).
-
-    Возвращает {"ok": bool, "status": код, "reason": "…"}.
-    ok=True только если сервер отдал 200 и в ответе похоже на плейлист (#EXTM3U)
-    или на видео/сегмент. 403 — ссылка привязана к сессии, нужен Referer.
-    """
-    headers = {"User-Agent": UA, "Accept": "*/*"}
-    if referer:
-        headers["Referer"] = referer
-        # некоторые CDN проверяют Origin вместе с Referer
-        try:
-            b = urllib.parse.urlsplit(referer)
-            headers["Origin"] = f"{b.scheme}://{b.netloc}"
-        except ValueError:
-            pass
-    req = urllib.request.Request(url, headers=headers)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            head = r.read(2048)
-            code = r.status
-    except urllib.error.HTTPError as e:
-        return {"ok": False, "status": e.code, "reason": _http_reason(e.code)}
-    except Exception as e:
-        return {"ok": False, "status": 0, "reason": f"нет ответа: {type(e).__name__}"}
-    if code != 200:
-        return {"ok": False, "status": code, "reason": _http_reason(code)}
-    if head[:7] == b"#EXTM3U" or (head and head[:1] in (b"\x00", b"\x47", b"\xff", b"\x1a")):
-        return {"ok": True, "status": 200, "reason": "плейлист"}
-    return {"ok": False, "status": 200, "reason": "ответ не похож на поток"}
 
 
 def _http_reason(code: int) -> str:

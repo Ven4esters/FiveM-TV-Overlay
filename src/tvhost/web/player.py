@@ -1048,18 +1048,53 @@ def build_source_url(sid: str, session: Session, base: str) -> str:
     return f"{base}/{session.mode}?url={q}"
 
 
+# Расширения прямых файлов: их hls.js НЕ разбирает, нужен обычный <video src>.
+# Если отдать mp4 в hls.js, он попробует прочитать его как плейлист:
+# currentSrc станет blob:, readyState останется 0, экран чёрный (ERR-050).
+_DIRECT_FILE_EXT = (
+    ".mp4",
+    ".m4v",
+    ".webm",
+    ".mkv",
+    ".mov",
+    ".avi",
+    ".ogv",
+    ".ogg",
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".flac",
+    ".opus",
+    ".wav",
+)
+
+
+def _looks_like_direct_file(url: str) -> bool:
+    """Ссылка оканчивается на расширение файла (с учётом ?query и #hash)."""
+    path = (url or "").split("?", 1)[0].split("#", 1)[0].lower()
+    return path.endswith(_DIRECT_FILE_EXT)
+
+
 def is_hls_session(session: Session) -> bool:
     """
     Похоже ли на HLS — тогда играем через hls.js, без конвертации.
     Смотрим и на исходную ссылку, и на разрешённый поток (Rutube/YouTube
     отдают страницу, а реальный поток — .m3u8).
     """
-    for candidate in (session.url or "", getattr(session, "resolved_url", "") or ""):
+    candidates = (session.url or "", getattr(session, "resolved_url", "") or "")
+    for candidate in candidates:
         low = candidate.lower()
         if ".m3u8" in low or low.startswith("hls:") or ".mpd" in low:
             return True
-    # неизвестный сайт с режимом "любой сайт" — тоже считаем потоком,
-    # hls.js сам разберётся, а если нет — упадёт в обычный <video>
+
+    # Прямой файл с известным расширением — это НЕ HLS, что бы там ни было
+    # с режимом. Проверяем ДО эвристики по режиму (ERR-050).
+    if any(_looks_like_direct_file(c) for c in candidates if c):
+        return False
+
+    # Неизвестный сайт с режимом "любой сайт" — вероятнее поток, чем файл:
+    # страницы отдают m3u8 через плеер. Если не угадали, hls.js сообщит
+    # об ошибке, а плеер покажет текст, а не чёрный экран.
     return session.mode == "r"
 
 

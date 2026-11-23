@@ -170,6 +170,20 @@ def is_probably_direct(url: str) -> tuple[bool, bool]:
     return direct, hls
 
 
+def safe_int(value: object, default: int = 0) -> int:
+    """
+    Привести к int что угодно, не падая.
+
+    Раньше `int(qs["since"][0])` и `int(headers["Content-Length"])` падали
+    на мусоре: сервер отдавал 500 и закрывал соединение вместо ответа 400.
+    Значение приходит из сети, доверять ему нельзя (ERR-054).
+    """
+    try:
+        return int(value)  # type: ignore[call-overload]
+    except (TypeError, ValueError):
+        return default
+
+
 def probe_content_type(url: str) -> tuple[str | None, int | None]:
     req = urllib.request.Request(url, method="HEAD", headers=dict(BROWSER_HEADERS))
     try:
@@ -897,14 +911,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def _route_commands(self, path: str, qs: dict, target):
         """1в) опрос команд страницей: /cmd/<sid>?since=N"""
         sid = path[len("/cmd/") :].strip("/")
-        since = int((qs.get("since") or ["0"])[0] or 0)
+        since = safe_int((qs.get("since") or ["0"])[0], 0)
         seq, cmds = PLAYER_SESSIONS.poll_commands(sid, since)
         return self._send_json(200, {"seq": seq, "commands": cmds})
 
     def _route_report(self, path: str, qs: dict, target):
         """1г) состояние от страницы: /report/<sid>"""
         sid = path[len("/report/") :].strip("/")
-        length = int(self.headers.get("Content-Length") or 0)
+        length = safe_int(self.headers.get("Content-Length"), 0)
+        length = min(max(length, 0), 1024 * 1024)  # тело запроса состояния крошечное
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
         except (json.JSONDecodeError, ValueError):
@@ -1077,7 +1092,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             200,
             {
                 "snapshot": diag.snapshot(),
-                "events": diag.recent(int((qs.get("limit") or ["300"])[0])),
+                "events": diag.recent(safe_int((qs.get("limit") or ["300"])[0], 300)),
                 "report": diag.report_text(),
             },
         )
@@ -1411,7 +1426,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
         path = parsed.path
         if path.startswith("/report/"):
             sid = path[len("/report/") :].strip("/")
-            length = int(self.headers.get("Content-Length") or 0)
+            length = safe_int(self.headers.get("Content-Length"), 0)
+            length = min(max(length, 0), 1024 * 1024)  # тело запроса состояния крошечное
             raw = self.rfile.read(length) if length else b"{}"
             try:
                 payload = json.loads(raw or b"{}")
@@ -1824,45 +1840,6 @@ class ProxyHandler(BaseHTTPRequestHandler):
             link += f"&ref={urllib.parse.quote(referer, safe='')}"
         return link
 
-    def _yt_hls_available(self, url: str) -> bool:
-        """Есть ли у YouTube HLS с раздельными видео/аудио дорожками."""
-        self._yt_hls_cache = getattr(self, "_yt_hls_cache", {})
-        if url in self._yt_hls_cache:
-            return self._yt_hls_cache[url]
-        ok = False
-        try:
-            import yt_dlp
-
-            opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "skip_download": True,
-                "format": "all",
-                "noplaylist": True,
-                "socket_timeout": 20,
-                "retries": 1,
-            }
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-            fmts = info.get("formats") or []
-            has_v = any(
-                "m3u8" in (f.get("protocol") or "")
-                and f.get("height")
-                and (f.get("acodec") or "none") == "none"
-                for f in fmts
-            )
-            has_a = any(
-                "m3u8" in (f.get("protocol") or "")
-                and not f.get("height")
-                and (f.get("vcodec") or "none") == "none"
-                for f in fmts
-            )
-            ok = bool(has_v and has_a)
-        except Exception:  # noqa: BLE001
-            ok = False
-        self._yt_hls_cache[url] = ok
-        return ok
-
     def _send_playlist(self, text: str) -> None:
         """Отдать готовый плейлист как есть (ссылки в нём уже через /hls)."""
         body = text.encode("utf-8")
@@ -2199,13 +2176,15 @@ def main() -> None:
     args = ap.parse_args()
 
     load_registry()
-    # тихая уборка: скачанные видео и профили браузера старее суток
+    # Тихая уборка: скачанные видео и профили браузера старее суток.
+    # Импорт абсолютный от пакета: плоский `import cleanup` внутри пакета
+    # не находится, ошибка проглатывалась и уборка не запускалась вовсе.
     try:
-        import cleanup  # noqa: PLC0415
+        from .infra import cleanup  # noqa: PLC0415
 
         cleanup.auto_clean()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        diag.log("err", "автоуборка не запустилась", error=f"{type(e).__name__}: {e}"[:200])
     ProxyHandler.proxy_base = f"http://127.0.0.1:{args.port}"
 
     class _Server(ThreadingHTTPServer):

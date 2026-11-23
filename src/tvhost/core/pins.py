@@ -414,16 +414,47 @@ def _pinned_file(pid: str) -> Path | None:
 
 def _parse_range(header: str | None, size: int) -> tuple[int, int] | None:
     """
-    Разобрать заголовок Range в (начало, конец).
+    Разобрать заголовок Range в (начало, конец) включительно.
 
-    Возвращает None, если диапазона нет или он некорректен — тогда
-    отдаётся файл целиком.
+    Понимает все три формы из RFC 7233:
+        bytes=100-200   обычный диапазон
+        bytes=100-      от 100 до конца файла
+        bytes=-500      ПОСЛЕДНИЕ 500 байт (не «от 0 до 500»!)
+
+    Возвращает None, если заголовка нет (отдаём файл целиком).
+    Бросает ValueError, если заголовок есть, но выполнить его нельзя —
+    вызывающий обязан ответить 416 (RFC 7233, §4.4).
+
+    Форму «последние N байт» плееры используют, чтобы прочитать хвост
+    MP4 (moov-atom) до начала воспроизведения. Если её перепутать с
+    «от 0 до N», плеер получает начало файла вместо индекса и видео
+    либо не стартует, либо прыгает в начало при перемотке.
     """
-    match = re.search(r"bytes=(\d*)-(\d*)", header or "")
+    if not header:
+        return None  # заголовка нет — отдаём файл целиком
+
+    match = re.fullmatch(r"\s*bytes=(\d*)-(\d*)\s*", header)
     if not match:
-        return None
-    start = int(match.group(1) or 0)
-    end = int(match.group(2)) if match.group(2) else size - 1
+        raise ValueError("непонятный Range")  # заголовок есть, но битый → 416
+    first, last = match.group(1), match.group(2)
+
+    # «bytes=-500» — суффиксный диапазон: последние 500 байт
+    if not first and last:
+        length = int(last)
+        if length <= 0 or size <= 0:
+            raise ValueError("пустой суффиксный диапазон")
+        return max(size - length, 0), size - 1
+
+    # «bytes=-» — мусор без чисел
+    if not first and not last:
+        raise ValueError("диапазон без чисел")
+
+    start = int(first)
+    if start >= size:
+        raise ValueError("начало за пределами файла")  # → 416
+    end = int(last) if last else size - 1
+    if end < start:
+        raise ValueError("перевёрнутый диапазон")  # → 416
     return start, min(end, size - 1)
 
 
@@ -499,7 +530,15 @@ def serve_partial(handler, pid: str) -> bool:
     if size <= 0:
         return False
 
-    byte_range = _parse_range(handler.headers.get("Range"), size)
+    try:
+        byte_range = _parse_range(handler.headers.get("Range"), size)
+    except ValueError:
+        # Заголовок есть, но диапазон невыполним — по стандарту 416,
+        # а не «отдадим весь файл»: плеер иначе считает размер неверно.
+        handler.send_response(416)
+        handler.send_header("Content-Range", f"bytes */{size}")
+        handler.end_headers()
+        return True
     if not _send_file_headers(handler, size, "video/mp4", byte_range):
         return True  # 416 уже отправлен
     if handler.command == "HEAD":

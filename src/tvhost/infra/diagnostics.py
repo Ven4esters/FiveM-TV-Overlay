@@ -35,6 +35,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+from pathlib import Path
 
 MAX_EVENTS = 500
 _events: collections.deque = collections.deque(maxlen=MAX_EVENTS)
@@ -43,7 +44,12 @@ _started = time.time()
 
 # Файл журнала: события должны пережить перезапуск прокси и падение —
 # иначе «журнал» есть только в памяти и пропадает вместе с процессом.
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+#
+# BASE_DIR — папка ПРОГРАММЫ, а не папка модуля. Раньше это был
+# путь к infra/, и diag.log падал внутрь пакета: при установке через pip
+# эта папка только для чтения, и журнал молча не вёлся (ERR-053).
+# infra/ → tvhost/ → src/ → корень проекта
+BASE_DIR = str(Path(__file__).resolve().parents[3])
 _MAX_FILE_BYTES = 2 * 1024 * 1024
 
 

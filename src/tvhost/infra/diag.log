@@ -134,3 +134,28 @@
 16:57:53 [err] 404 test-streams.mux.dev…url_593/193039199_mp4_h264_aac_fhd_7.ts  code=404
 16:58:03 [req] 200 test-streams.mux.dev…url_593/193039199_mp4_h264_aac_fhd_7.ts  code=200
 16:58:04 [err] 404 test-streams.mux.dev…url_593/193039199_mp4_h264_aac_fhd_7.ts  code=404
+17:03:10 [new] готово за 0.3 с: test-videos.co.uk…h264/360/Big_Buck_Bunny_360_10s_1MB.mp4  sec=0.34 quality=
+17:03:11 [new] готово за 0.1 с: test-streams.mux.dev/x36xhzz/x36xhzz.m3u8  sec=0.05 quality=
+17:03:15 [req] 200 /static/hls.min.js  code=200
+17:03:15 [err] 404 /static/hls.min.js  code=404
+17:03:15 [boot] страница открылась в игре  sid=6Ytrevrk ua=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/159.0.0.0 Safari/537.36 hls=загружен mse=да native=maybe screen=1280x720
+17:03:31 [req] 200 /static/hls.min.js  code=200
+17:03:31 [err] 404 /static/hls.min.js  code=404
+17:03:31 [boot] страница открылась в игре  sid=UGdQLD_q ua=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/159.0.0.0 Safari/537.36 hls=загружен mse=да native=maybe screen=1280x720
+17:03:32 [req] 200 test-streams.mux.dev…/url_2/193039199_mp4_h264_aac_ld_7.m3u8  code=200
+17:03:32 [err] 404 test-streams.mux.dev…/url_2/193039199_mp4_h264_aac_ld_7.m3u8  code=404
+17:03:32 [req] 200 test-streams.mux.dev…/url_526/193039199_mp4_h264_aac_ld_7.ts  code=200
+17:03:32 [err] 404 test-streams.mux.dev…/url_526/193039199_mp4_h264_aac_ld_7.ts  code=404
+17:03:32 [req] 200 test-streams.mux.dev…url_8/193039199_mp4_h264_aac_fhd_7.m3u8  code=200
+17:03:32 [err] 404 test-streams.mux.dev…url_8/193039199_mp4_h264_aac_fhd_7.m3u8  code=404
+17:03:32 [req] 200 test-streams.mux.dev…url_590/193039199_mp4_h264_aac_fhd_7.ts  code=200
+17:03:35 [err] 404 test-streams.mux.dev…url_590/193039199_mp4_h264_aac_fhd_7.ts  code=404
+17:03:35 [req] 200 test-streams.mux.dev…url_591/193039199_mp4_h264_aac_fhd_7.ts  code=200
+17:03:35 [err] 404 test-streams.mux.dev…url_591/193039199_mp4_h264_aac_fhd_7.ts  code=404
+17:03:35 [req] 200 test-streams.mux.dev…url_592/193039199_mp4_h264_aac_fhd_7.ts  code=200
+17:03:36 [err] 404 test-streams.mux.dev…url_592/193039199_mp4_h264_aac_fhd_7.ts  code=404
+17:03:36 [req] 200 test-streams.mux.dev…url_593/193039199_mp4_h264_aac_fhd_7.ts  code=200
+17:03:36 [err] 404 test-streams.mux.dev…url_593/193039199_mp4_h264_aac_fhd_7.ts  code=404
+17:03:37 [player] ошибка в игре: поток: bufferFullError фрагмент Furl_8%2Furl_593%2F193039199_mp4_h264_aac_fhd_7.ts  sid=UGdQLD_q quality= ready= level=
+17:03:37 [req] 200 test-streams.mux.dev…url_593/193039199_mp4_h264_aac_fhd_7.ts  code=200
+17:03:37 [err] 404 test-streams.mux.dev…url_593/193039199_mp4_h264_aac_fhd_7.ts  code=404

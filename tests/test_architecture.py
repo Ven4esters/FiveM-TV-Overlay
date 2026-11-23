@@ -157,24 +157,42 @@ def test_all_modules_import_cleanly() -> None:
     """
     import importlib
 
-    modules = [
-        "tvhost.infra.console_io",
-        "tvhost.infra.cache",
-        "tvhost.infra.cleanup",
-        "tvhost.infra.diagnostics",
-        "tvhost.infra.ffmpeg_bin",
-        "tvhost.infra.sources",
-        "tvhost.core.pins",
-        "tvhost.core.free_videos",
-        "tvhost.core.download",
-        "tvhost.web.player",
-        "tvhost.proxy",
-        "tvhost.server",
-    ]
     failures: list[str] = []
-    for name in modules:
+    for name in _all_package_modules():
         try:
             importlib.import_module(name)
         except Exception as exc:  # noqa: BLE001
             failures.append(f"{name}: {type(exc).__name__}: {exc}")
     assert not failures, "модули не импортируются:\n" + "\n".join(failures)
+
+
+def _all_package_modules() -> list[str]:
+    """
+    Список модулей собирается из файлов, а не пишется руками.
+
+    Раньше список был захардкожен и от него отставали: devtools, icons,
+    overlay и __main__ никогда не проверялись. Новый модуль в пакете
+    теперь попадает под проверку сам.
+    """
+    root = Path(__file__).resolve().parents[1] / "src" / "tvhost"
+    names = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root.parent).with_suffix("")
+        parts = list(rel.parts)
+        if parts[-1] == "__init__":
+            parts = parts[:-1]
+        if parts:
+            names.append(".".join(parts))
+    return names
+
+
+def test_module_list_is_not_empty() -> None:
+    """Защита от опечатки в пути: пустой список прошёл бы молча."""
+    assert len(_all_package_modules()) >= 15
+
+
+def test_ui_modules_are_covered() -> None:
+    """Регресс на ERR-052: UI-слой тоже обязан импортироваться."""
+    names = _all_package_modules()
+    for must in ("tvhost.ui.overlay", "tvhost.ui.icons", "tvhost.__main__"):
+        assert must in names, f"{must} выпал из проверки импортов"
