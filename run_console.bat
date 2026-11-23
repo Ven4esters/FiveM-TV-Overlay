@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 REM --- UTF-8 в консоли, иначе русский текст и эмодзи дают кракозябры ---
 chcp 65001 >nul 2>&1
 setlocal EnableExtensions

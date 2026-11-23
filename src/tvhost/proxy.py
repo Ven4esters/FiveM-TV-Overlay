@@ -292,6 +292,27 @@ KNOWN_MEDIA_HOSTS = (
 )
 
 
+# расширения кусков HLS: видео, аудио, субтитры
+_SEGMENT_EXT = (".ts", ".mp4", ".m4s", ".aac", ".m4a", ".vtt", ".cmfv", ".cmfa")
+
+
+def _looks_like_segment(url: str) -> bool:
+    """Похоже ли на кусок потока, а не на плейлист.
+
+    У VK и Kodik путь сегмента лежит ВНУТРИ параметра: `/hls?url=https://
+    .../video/HIGH00000.ts`. Поэтому `url.endswith(".ts")` не работает —
+    надо развернуть параметр `url=` и смотреть его.
+    """
+    candidate = url
+    parsed = urllib.parse.urlparse(url)
+    inner = urllib.parse.parse_qs(parsed.query).get("url")
+    if inner:
+        candidate = inner[0]
+    # отрезаем query у внутреннего адреса (?i=1920x1080, ?expires=...)
+    path = urllib.parse.urlparse(candidate).path.lower()
+    return path.endswith(_SEGMENT_EXT)
+
+
 def _is_rutube(url: str) -> bool:
     """Rutube разбирается отдельной веткой (видео и звук одной дорожкой)."""
     return sources.is_rutube(url)
@@ -505,7 +526,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
             except Exception:  # noqa: BLE001
                 name = request_line[:80]
             kind = "req" if str(status)[:1] in ("2", "3") else "err"
-            diag.log(kind, f"{status} {name}", code=status)
+            # подробности, без которых журнал бесполезен при разборе жалобы
+            # «не играет»: что именно запрашивали и чем это закончилось
+            info: dict = {"code": status}
+            if target:
+                low = target.lower()
+                if ".ts" in low or ".m4s" in low or ".aac" in low:
+                    info["what"] = "сегмент"
+                elif ".m3u8" in low:
+                    info["what"] = "плейлист"
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(part).query)
+            if q.get("url"):
+                # исходный адрес CDN — по нему видно, какое качество упало
+                info["src"] = diag.short_url(urllib.parse.unquote(q["url"][0]))
+            diag.log(kind, f"{status} {name}", **info)
             if kind == "err":
                 try:
                     sys.stderr.write(
@@ -865,6 +899,7 @@ class ProxyHandler(BaseHTTPRequestHandler):
             "/unpin": self._route_unpin,
             "/diag": self._route_diagnostics,
             "/diag/clear": self._route_diagnostics_clear,
+            "/favicon.ico": self._route_favicon,
             "/direct": self._route_hls_bridge,
             "/hls": self._route_hls_bridge,
             "/yt-master": self._route_yt_master,
@@ -941,11 +976,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
         # Ошибку из игры видно ТОЛЬКО здесь: пишем в журнал и в файл.
         err = (payload or {}).get("error") if isinstance(payload, dict) else ""
         if err:
+            # В журнале нужны ВСЕ подробности, которые прислал плеер:
+            # иначе «manifestLoadError» ни о чём не говорит при разборе.
+            detail = payload or {}
             diag.log(
                 "player",
                 f"ошибка в игре: {err}",
                 sid=sid,
-                quality=(payload or {}).get("quality", ""),
+                quality=detail.get("quality", ""),
+                reason=str(detail.get("reason") or detail.get("details") or "")[:200],
+                src=diag.short_url(str(detail.get("url") or detail.get("src") or "")),
+                pos=detail.get("pos", ""),
             )
         return self._send_json(200, {"ok": True})
 
@@ -999,6 +1040,27 @@ class ProxyHandler(BaseHTTPRequestHandler):
         if not target:
             return self._send_text(400, "<h3>Нужен url</h3>")
         return self._serve_subtitles(target)
+
+    def _route_favicon(self, path: str, qs: dict, target):
+        """favicon.ico: браузер игры просит его всегда.
+
+        Без ответа в журнале появляется «404 /favicon.ico» на каждой
+        странице, и настоящие ошибки теряются среди них.
+        """
+        # прозрачный PNG 1x1 — меньше байта не бывает, и он валидный
+        data = bytes.fromhex(
+            "89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+            "1f15c4890000000a49444154789c6300010000050001"
+            "0d0a2db40000000049454e44ae426082"
+        )
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "public, max-age=86400")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+        return True
 
     def _route_static(self, path: str, qs: dict, target):
         """1и) статика для плеера (hls.js хранится локально)"""
@@ -1166,19 +1228,28 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 info = sources.rutube_stream(target)
             except Exception as e:  # noqa: BLE001
                 return self._send_text(502, f"<h3>Rutube: {e}</h3>")
-            if not info or not info.get("quality_files"):
+            # Rutube отдаёт на каждое качество СВОЙ плейлист с временным
+            # токеном в пути: собирать его как base + имя файла нельзя
+            # (имена вида 8d3f....mp4.m3u8?i=1920x1080_5884 уникальны).
+            # Поэтому берём готовые ссылки из variants, а старый способ
+            # (quality_files + master_base) оставляем запасным.
+            variants = (info or {}).get("variants") or {}
+            quality_files = (info or {}).get("quality_files") or {}
+            base = (info or {}).get("master_base") or ""
+            if variants:
+                quality_urls = {int(h): u for h, u in variants.items() if str(h).isdigit()}
+            elif quality_files:
+                quality_urls = {int(h): base + f for h, f in quality_files.items()}
+            else:
                 return self._send_text(502, "<h3>Rutube не отдал качества</h3>")
             lines = ["#EXTM3U", "#EXT-X-VERSION:3"]
-            base = info.get("master_base") or ""
-            files = info["quality_files"]
             # от лучшего к худшему
-            for h in sorted((int(k) for k in files), reverse=True):
-                url_h = base + files[str(h)]
+            for h in sorted(quality_urls, reverse=True):
                 bw = h * 8000  # оценка битрейта: 1080p ≈ 8.6 Мбит/с
                 lines.append(
                     f'#EXT-X-STREAM-INF:BANDWIDTH={bw},RESOLUTION={int(h * 16 / 9)}x{h},NAME="{h}p"'
                 )
-                lines.append(f"/hls?url={urllib.parse.quote(url_h, safe='')}")
+                lines.append(f"/hls?url={urllib.parse.quote(quality_urls[h], safe='')}")
             body = "\n".join(lines).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/vnd.apple.mpegurl")
@@ -1757,7 +1828,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
         # Master со ВСЕМИ качествами: hls.js сам подберёт по скорости.
         # Одна дорожка 1080p (6.8 Мбит/с) не успевает на слабом канале
         # и даёт manifestLoadError — поэтому отдаём выбор плееру.
-        if info.get("quality_files"):
+        # Признак «есть выбор качеств» — variants (quality_files у Rutube
+        # теперь всегда пуст: имена плейлистов у каждого качества свои).
+        if info.get("variants") or info.get("quality_files"):
             sess.source_url = f"{self._base()}/rutube-master?url={urllib.parse.quote(url, safe='')}"
         else:
             sess.source_url = info["url"]
@@ -1939,6 +2012,48 @@ class ProxyHandler(BaseHTTPRequestHandler):
             text = (head + rest).decode("utf-8", "replace")
             return text, remote.geturl()
 
+    def _proxy_segment(self, url: str) -> None:
+        """Отдать сегмент HLS (видео/аудио) байтами как есть.
+
+        Сегмент нельзя отличить от плейлиста по расширению: у VK и Kodik
+        имя файла спрятано внутри параметра `url=`. Поэтому смотрим, что
+        реально лежит в начале ответа: `#EXTM3U` — плейлист, иначе — байты.
+        """
+        try:
+            req = urllib.request.Request(url, headers=self._headers_for(url))
+            with urllib.request.urlopen(req, timeout=25) as remote:
+                head = remote.read(1024)
+                if head.startswith(b"#EXTM3U"):
+                    # это всё-таки плейлист — обработаем как плейлист
+                    rest = remote.read()
+                    text = (head + rest).decode("utf-8", "replace")
+                    self._send_playlist(self._rewrite_playlist(text, remote.geturl()))
+                    return
+                self.send_response(getattr(remote, "status", 200))
+                ctype = remote.headers.get("Content-Type") or "application/octet-stream"
+                self.send_header("Content-Type", ctype)
+                length = remote.headers.get("Content-Length")
+                if length:
+                    self.send_header("Content-Length", length)
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                if self.command != "HEAD":
+                    try:
+                        self.wfile.write(head)
+                        while chunk := remote.read(64 * 1024):
+                            self.wfile.write(chunk)
+                        self.wfile.flush()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+        except Exception as e:  # noqa: BLE001
+            diag.log(
+                "err",
+                f"не удалось отдать сегмент: {diag.short_url(url)}",
+                error=f"{type(e).__name__}: {e}"[:200],
+            )
+            self._send_text(502, f"<h3>Сегмент не отдался</h3><p>{e}</p>")
+
     def _serve_hls(self, target: str) -> None:
         """
         Прокси для HLS: hls.js запрашивает плейлист и сегменты у нас,
@@ -1970,10 +2085,21 @@ class ProxyHandler(BaseHTTPRequestHandler):
         return self._hls_playlist_resolved(target)
 
     def _hls_playlist_vk(self, target: str) -> tuple[str, str] | None:
-        """Плейлист VK: сначала прямой CDN (если отдаёт #EXTM3U), потом master."""
+        """
+        Плейлист VK: сначала прямой CDN (если отдаёт #EXTM3U), потом master.
+
+        ВАЖНО: сегмент тоже приходит сюда — /hls?url=...v.../HIGH00000.ts.
+        Раньше его принимали за плейлист, `vk_master` на .ts возвращал None,
+        и прокси закрывал соединение, не отправив ни байта: hls.js падал с
+        fragLoadError. Поэтому не угадываем по расширению, а смотрим ответ.
+        """
         low = target.lower()
-        is_segment = low.endswith((".ts", ".mp4", ".m4s", ".aac", ".m4a", ".vtt"))
-        if "okcdn.ru" in low and not is_segment:
+        # сегмент VK/Kodik: отдаём байты как есть, плейлист не ищем
+        if _looks_like_segment(target):
+            self._proxy_segment(target)
+            return None
+
+        if "okcdn.ru" in low:
             try:
                 req = urllib.request.Request(target, headers=self._headers_for(target))
                 with urllib.request.urlopen(req, timeout=25) as response:
@@ -2000,6 +2126,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
     def _hls_playlist_kodik(self, target: str) -> tuple[str, str] | None:
         """Плейлист Kodik, собранный из отдельных потоков качеств."""
+        # сегмент Kodik — та же ловушка, что у VK (см. _hls_playlist_vk)
+        if _looks_like_segment(target):
+            self._proxy_segment(target)
+            return None
         master = sources.kodik_master(target)
         if not master:
             return None
@@ -2207,6 +2337,19 @@ def main() -> None:
         diag.log("err", "автоуборка не запустилась", error=f"{type(e).__name__}: {e}"[:200])
     ProxyHandler.proxy_base = f"http://127.0.0.1:{args.port}"
 
+    # Начало работы программы в журнале: без этой строки непонятно, где
+    # кончился прошлый запуск и начался новый, а журнал живёт между ними.
+    diag.mark_start()
+    snap = diag.snapshot()
+    diag.log(
+        "info",
+        f"прокси запущен на порту {args.port}",
+        python=snap.get("python", "?"),
+        ytdlp=snap.get("yt-dlp", "?"),
+        ffmpeg=snap.get("ffmpeg", "?"),
+        journal=diag.LOG_PATH,
+    )
+
     class _Server(ThreadingHTTPServer):
         daemon_threads = True  # не держать процесс из-за клиента
         allow_reuse_address = True
@@ -2226,6 +2369,7 @@ def main() -> None:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nОстановлено.")
+        diag.log("info", "прокси остановлен (Ctrl+C)")
     finally:
         for p in list(_ffmpeg_procs):
             p.kill()

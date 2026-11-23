@@ -216,6 +216,9 @@ def _vk_formats(url: str) -> list[dict]:
                 "url": f.get("url"),
                 "protocol": (f.get("protocol") or ""),
                 "height": f.get("height") or 0,
+                # ширина нужна отдельно: у вертикальных видео yt-dlp кладёт
+                # в height большую сторону (1080x1920 -> height=1920)
+                "width": f.get("width") or 0,
                 "tbr": f.get("tbr") or 0,
                 "vcodec": f.get("vcodec") or "none",
                 "acodec": f.get("acodec") or "none",
@@ -271,7 +274,10 @@ def _vk_master_uncached(url: str) -> dict | None:
     for h in sorted(variants, reverse=True):
         f = variants[h]
         br = int(f["tbr"] or max(400, h * 4.5))
-        width = int(h * 16 / 9)
+        # Ширину берём у источника: у вертикальных видео yt-dlp кладёт в
+        # height большую сторону, и h*16/9 даёт «3413x1920» — hls.js в
+        # таком случае показывает кашу или отказывается играть.
+        width = int(f.get("width") or 0) or int(h * 16 / 9)
         if audio_url:
             lines.append(
                 f'#EXT-X-STREAM-INF:BANDWIDTH={br * 1000},RESOLUTION={width}x{h},AUDIO="aud"'
