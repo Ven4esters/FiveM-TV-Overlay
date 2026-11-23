@@ -103,6 +103,9 @@ jobs:
           sleep 8
           # -m network выбирает тесты, помеченные как сетевые.
           # Код 5 = «ничего не выбрано»: сетевых тестов сейчас нет, это не сбой.
-          python -m pytest tests/ -q -m network; code=$?
+          # Внимание: шаги идут под `bash -e`, поэтому обычный `; code=$?`
+          # не сработает — шелл выйдет раньше. Ловим через `|| code=$?`.
+          code=0
+          python -m pytest tests/ -q -m network || code=$?
           if [ "$code" -eq 5 ]; then echo "Сетевых тестов нет — пропуск"; exit 0; fi
           exit $code
