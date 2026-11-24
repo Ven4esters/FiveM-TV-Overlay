@@ -315,6 +315,7 @@ class TestTvigle:
         заказчик видел «master.m3u8: HTTP 502» на исправном видео.
         Сайт поток отдал, значит адрес рабочий: отдаём его как есть.
         """
+
         def fake_fetch(url: str) -> str:
             if "/api/play/video/" in url:  # API: поток есть
                 return (
@@ -407,3 +408,39 @@ class TestHonestRefusals:
         «ошибка потока» вместо причины. Один адрес «как есть» играет лучше.
         """
         assert tvigle.MIN_HEIGHT == 144
+
+
+# -------------------------------------- адреса видео: где их на самом деле дают
+
+
+class TestWhereLinksLive:
+    """Расшифровка скрипта плеера 24.11.2026 (docs/REPORT_alloha_source.md).
+
+    Адреса видео приходят ответом на `POST /bnsi/movies/<id_file>` — в поле
+    `hlsSource`, массивом озвучек, у каждой `quality` с адресами по высотам.
+    Из США этот POST отвечает 404 «контент не найден» на ЛЮБОЙ id — проверка
+    региональная и стоит до поиска файла. Тесты держат оба факта, чтобы
+    будущая правка не начала «искать ссылки в разметке» заново.
+    """
+
+    def test_file_ids_are_not_urls(self):
+        """`id_file` — номер файла, а не адрес: по нему идёт POST."""
+        html = 'fileList: [{"id": 1836882, "id_file": "1836464", "quality": "WEB-DL"}]'
+        assert alloha.qualities_of(html) == []
+        assert "1836464" in html
+
+    def test_bnsi_route_and_field_names(self):
+        """Маршрут и поля ответа — константы протокола, а не догадки."""
+        doc = alloha.__doc__ or ""
+        assert "/bnsi" in doc, "в описании источника должен быть назван маршрут"
+        assert "hlsSource" in doc, "и поле ответа, в котором лежат адреса"
+
+    def test_region_checked_before_file_lookup(self):
+        """Снаружи России 404 и на реальный id, и на выдуманный — один текст.
+
+        Это признак региональной проверки, а не «файла нет». Если однажды
+        Alloha начнёт отвечать по-разному, тест напомнит перепроверить.
+        """
+        doc = alloha.__doc__ or ""
+        assert "не найден" in doc.lower()
+        assert "Росси" in doc
