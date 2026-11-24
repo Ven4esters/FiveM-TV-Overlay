@@ -219,3 +219,89 @@ class TestQualitiesOfSources:
     def test_nothing_at_all(self) -> None:
         assert alloha.qualities_of_sources([]) == []
         assert alloha.qualities_of_sources([{"label": "x"}]) == []
+
+
+class TestPostForm:
+    """Форма — так шлёт запрос сам плеер (`$.ajax` с объектом data)."""
+
+    def test_body_is_urlencoded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: dict[str, object] = {}
+
+        def fake_post(url: str, data: bytes, headers: dict[str, str]) -> tuple[int, str]:
+            seen.update(url=url, data=data, headers=headers)
+            return 200, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_raw_post", fake_post)
+        status, body = alloha_bnsi._post_form(
+            "https://x.live/bnsi/movies/1", {"token": "abc", "av1": 0, "autoplay": 0}, {}
+        )
+        assert (status, body) == (200, "{}")
+        assert seen["data"] == b"token=abc&av1=0&autoplay=0"
+        headers = seen["headers"]
+        assert isinstance(headers, dict)
+        assert headers["Content-Type"] == "application/x-www-form-urlencoded; charset=UTF-8"
+
+    def test_body_has_no_json_marks(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """В теле нет скобок и кавычек — сервер не спутает форму с JSON."""
+        seen: dict[str, bytes] = {}
+
+        def fake_post(url: str, data: bytes, headers: dict[str, str]) -> tuple[int, str]:
+            seen["data"] = data
+            return 200, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_raw_post", fake_post)
+        alloha_bnsi._post_form("https://x.live/bnsi/movies/1", {"token": "abc", "av1": 0}, {})
+        assert b"{" not in seen["data"] and b'"' not in seen["data"]
+
+
+class TestVariants:
+    """Перебор вариантов: пока один не вернёт `hlsSource`."""
+
+    def test_stops_on_first_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+
+        def fake(url: str, payload: dict, headers: dict[str, str]) -> tuple[int, str]:
+            calls.append(url)
+            if len(calls) == 3:
+                return 200, json.dumps(BNSI_RESPONSE)
+            return 404, '{"error":"нет"}'
+
+        monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
+        monkeypatch.setattr(alloha_bnsi, "_post_json", fake)
+        rows = alloha_bnsi.try_variants("https://x.live/?token=abc", PLAYER_HTML, ["111", "222"])
+        assert rows[-1]["ok"] is True
+        assert len(calls) == 3
+        assert rows[-1]["slug"]
+
+    def test_each_variant_hits_every_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        calls: list[str] = []
+
+        def fake(url: str, payload: dict, headers: dict[str, str]) -> tuple[int, str]:
+            calls.append(url.rsplit("/", 1)[-1])
+            return 404, '{"error":"нет"}'
+
+        monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
+        monkeypatch.setattr(alloha_bnsi, "_post_json", fake)
+        rows = alloha_bnsi.try_variants("https://x.live/?token=abc", PLAYER_HTML, ["111", "222"])
+        names = [row["name"] for row in rows]
+        assert len(set(names)) >= 10  # вариантов много, а не один
+        assert calls[:2] == ["111", "222"]  # каждый вариант — по обоим номерам
+        assert all(row["status"] == 404 for row in rows)
+
+    def test_ids_taken_from_page_when_not_given(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def no_answer(url: str, payload: dict, headers: dict[str, str]) -> tuple[int, str]:
+            return 404, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_post_form", no_answer)
+        monkeypatch.setattr(alloha_bnsi, "_post_json", no_answer)
+        rows = alloha_bnsi.try_variants("https://x.live/?token=abc", PLAYER_HTML)
+        assert {row["id"] for row in rows} == {"1836882", "1847894"}
+
+    def test_no_ids_is_not_a_crash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def no_answer(url: str, payload: dict, headers: dict[str, str]) -> tuple[int, str]:
+            return 404, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_post_form", no_answer)
+        monkeypatch.setattr(alloha_bnsi, "_post_json", no_answer)
+        rows = alloha_bnsi.try_variants("https://x.live/?token=abc", "<html></html>")
+        assert rows and {row["id"] for row in rows} == {"0"}
