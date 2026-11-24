@@ -54,6 +54,38 @@ class ResolveError(Exception):
         self.hint = hint
 
 
+def _ask(source, url: str, translation_index: int | None, episode: int | None) -> Stream:
+    """Спросить источник — по одному набору параметров, который он понимает.
+
+    Почему ступеньки, а не один вызов: у источников разные подписи `resolve`.
+    vk/youtube/rutube принимают только ссылку; kodik — ещё озвучку; anidub.org
+    — ещё серию. Пробуем от самого полного набора к самому простому и
+    останавливаемся на первом, который источник принял.
+
+    Почему `TypeError` не пробрасываем: он возникает ровно в момент вызова,
+    когда подпись не совпала, — до какой-либо работы источника. Настоящие
+    ошибки разбора приходят как `OverlayError` и выводятся человеку.
+    """
+    variants: list[dict[str, int]] = []
+    if episode is not None and translation_index is not None:
+        variants.append({"translation_index": translation_index, "episode": episode})
+    if translation_index is not None:
+        variants.append({"translation_index": translation_index})
+    if episode is not None:
+        variants.append({"episode": episode})
+    variants.append({})
+    last: TypeError | None = None
+    for kwargs in variants:
+        try:
+            return source.resolve(url, **kwargs)
+        except TypeError as exc:
+            last = exc
+            log.debug("резолвер: %s не принял %s (%s)", source.name, kwargs, exc)
+    # Ни один вариант не подошёл — это ошибка в подписи источника, а не в
+    # ссылке. Сообщаем как есть, чтобы не прятать баг за «не удалось».
+    raise last or TypeError("источник не принял ни одного набора параметров")
+
+
 def ensure_registered() -> None:
     """Зарегистрировать источники один раз. Повторный вызов безопасен."""
     register_all()
@@ -65,11 +97,20 @@ def find_source(url: str):
     return registry.find(url)
 
 
-def resolve(url: str, translation_index: int | None = None) -> Resolved:
+def resolve(
+    url: str,
+    translation_index: int | None = None,
+    episode: int | None = None,
+) -> Resolved:
     """Разобрать ссылку в поток.
 
     translation_index — какая озвучка нужна (Kodik и подобные сайты, где
     каждая озвучка это отдельный поток). None — пусть источник выберет сам.
+
+    episode — номер серии. None — пусть источник решит сам (у Kodik это
+    первая серия, у anidub.org — первая доступная). Параметр ОБЩИЙ: если
+    источник не умеет серии, он просто не принимает его, и разбор идёт как
+    обычно — молчаливой подмены не происходит.
 
     Ошибки источников (`OverlayError`) и сети (`FetchError`) переводятся в
     `ResolveError` с понятным текстом: интерфейс показывает его человеку,
@@ -86,14 +127,7 @@ def resolve(url: str, translation_index: int | None = None) -> Resolved:
             "с параметрами после знака вопроса.",
         )
     try:
-        if translation_index is None:
-            stream = source.resolve(url)
-        else:
-            stream = source.resolve(url, translation_index=translation_index)
-    except TypeError:
-        # источник не умеет выбор озвучки — это нормально, у большинства
-        # сайтов дорожка одна
-        stream = source.resolve(url)
+        stream = _ask(source, url, translation_index, episode)
     except OverlayError as exc:
         raise ResolveError(str(exc), _hint_for(exc)) from exc
     except FetchError as exc:

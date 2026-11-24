@@ -198,6 +198,12 @@ class YummyAnimeSource:
         self._titles[page_url] = page_title(html)
         return tracks
 
+    def url_with_episode(self, url: str, number: int) -> str:
+        """Номер серии — в адресе страницы сайта: своей серии у yummy нет."""
+        from .kodik import url_with_episode  # noqa: PLC0415
+
+        return url_with_episode(url, number)
+
     def players_of(self, page_url: str) -> set[str]:
         """Какие плееры есть на странице: {"Kodik", "CVH", …}.
 
@@ -211,7 +217,7 @@ class YummyAnimeSource:
 
     # --------------------------------------------------------------- разбор
 
-    def resolve(self, url: str, translation_index: int = 0) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0, episode: int | None = None) -> Stream:
         tracks = self._tracks(url)
         if not tracks:
             players = self.players_of(url)
@@ -227,7 +233,7 @@ class YummyAnimeSource:
                 state=SourceState.PARTIAL,
             )
         index = translation_index if 0 <= translation_index < len(tracks) else 0
-        stream = self._inner.resolve(tracks[index]["iframe"])
+        stream = self._inner.resolve(tracks[index]["iframe"], episode=episode)
         return Stream(
             source=_NAME,
             title=self._titles.get(url) or stream.title,
@@ -241,4 +247,10 @@ class YummyAnimeSource:
                 for i, track in enumerate(tracks)
             ),
             subtitles=stream.subtitles,
+            # Серии — от внутреннего Kodik как есть: сайт отдаёт сериал,
+            # а список серий знает плеер.
+            episodes=stream.episodes,
+            episode=stream.episode,
+            episode_season=stream.episode_season,
+            can_switch_episode=stream.can_switch_episode,
         )

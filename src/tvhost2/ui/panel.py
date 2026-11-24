@@ -743,6 +743,14 @@ class Panel(QWidget):
         тогда переключатель не показываем вовсе, а не показываем пустой.
         """
         titles = [str(t) for t in data.get("episodes") or []]
+        # Показываем выбор, только если ИСТОЧНИК умеет переключать серии
+        # (сервер отвечает `canSwitchEpisode`). Один список ни о чём не
+        # говорит: у anidub.org серия приходит параметром, у Kodik — новым
+        # потоком, а у фильма со «связанными» видео список может быть, хотя
+        # переключать нечего.
+        can = data.get("canSwitchEpisode")
+        if can is None:
+            can = len(titles) > 1
         self.episode_box.blockSignals(True)
         self.episode_box.clear()
         if titles:
@@ -751,7 +759,7 @@ class Panel(QWidget):
             if 1 <= current <= len(titles):
                 self.episode_box.setCurrentIndex(current - 1)
         self.episode_box.blockSignals(False)
-        self.episode_box.setVisible(len(titles) > 1)
+        self.episode_box.setVisible(bool(can))
 
     def _episode_picked(self, index: int) -> None:
         """Выбрали серию: просим сервер разобрать её и открыть заново.
@@ -919,7 +927,7 @@ class Panel(QWidget):
         self._subtitle_titles = [str(t) for t in state.get("subtitles") or []]
         # Серии тоже приходят в /state: после переключения номера список
         # должен стоять на новой серии, иначе выбор «отскакивает».
-        if state.get("episodes"):
+        if state.get("episodes") or "canSwitchEpisode" in state:
             self._fill_episodes(state)
         if self.subs_index > len(self._subtitle_titles):
             self.subs_index = 0

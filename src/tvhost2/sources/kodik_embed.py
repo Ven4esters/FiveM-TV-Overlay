@@ -166,7 +166,14 @@ class KodikEmbedSource:
 
     # --------------------------------------------------------------- разбор
 
-    def resolve(self, url: str, translation_index: int = 0) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0, episode: int | None = None) -> Stream:
+        """Страница сайта → поток. Серия и озвучка — насквозь во внутренний Kodik.
+
+        Встройка ничего своего не добавляет: и озвучки, и серии уже умеет
+        `KodikSource`. Здесь важно только не потерять их по дороге — иначе
+        на всех сайтах с встройкой (а их большинство) переключатель серий
+        молча пропал бы.
+        """
         embed = self._embed_of(url)
         if not embed:
             raise SourceFailedError(
@@ -175,13 +182,23 @@ class KodikEmbedSource:
                 fix="Откройте страницу в браузере: возможно, плеер отдаётся только после входа",
                 state=SourceState.PARTIAL,
             )
-        stream = self._inner.resolve(embed, translation_index=translation_index)
+        stream = self._inner.resolve(embed, translation_index=translation_index, episode=episode)
         # Имя источника подменяем на понятное человеку: в пульте он видит
         # «Kodik (встройка)», а не имя плеера, о котором не слышал. Название
         # берём со страницы: сам Kodik возвращает в `title` просто «Kodik»,
         # и в «Недавних» вместо аниме было бы имя плеера.
         title = self._titles.get(url) or stream.title
         return replace(stream, source=_PLAYER_NAME, title=title)
+
+    def url_with_episode(self, url: str, number: int) -> str:
+        """Номер серии в адрес САЙТА, а не плеера.
+
+        У встройки ссылка на плеер синтезируется по странице, поэтому
+        помнить номер надо в адресе страницы — inner-метод сюда не годится.
+        """
+        from .kodik import url_with_episode  # noqa: PLC0415
+
+        return url_with_episode(url, number)
 
     # ---------------------------------------------------------- озвучки
 

@@ -38,7 +38,6 @@ from ..audio import loudness
 from ..core import diagnostics as diag
 from ..core import registry
 from ..sources import register_all
-from ..sources.kodik import url_with_episode as kodik_url_with_episode
 from . import hls as hls_bridge
 from . import player as player_page
 from . import resolver
@@ -481,12 +480,19 @@ class OverlayHandler(BaseHTTPRequestHandler):
         """Переключить серию: `POST /episode/<sid>?index=3`.
 
         Почему отдельный маршрут, а не `cmd`: серия — это НЕ команда плеера.
-        У Kodik каждая серия — отдельный поток со своими `id` и `hash`, и
-        сменить её можно только повторным разбором ссылки. Плееру после
-        этого остаётся перезагрузить страницу.
+        И у Kodik, и у anidub.org каждая серия — отдельный поток со своими
+        идентификаторами, поэтому «переключить дорожку» физически нечего:
+        нужен повторный разбор ссылки. Плееру остаётся перезагрузить
+        страницу.
 
-        Номер серии уходит в ссылку параметром `?episode=N`: так он
-        переживает повторный разбор через час, когда за сессией вернулись.
+        Механика ОБЩАЯ, без знания про конкретный сайт:
+
+          * номер уходит в `resolver.resolve(..., episode=N)`;
+          * источник, который серии не умеет, параметр просто не принимает,
+            и разбор идёт как обычно (серия тогда не меняется — и пульт об
+            этом честно говорит);
+          * ссылку правит `session.episode_url` — источник сам решает, как
+            запомнить номер (Kodik кладёт `?episode=N`, остальным не нужно).
         """
         session = STATE.sessions.get(sid)
         if session is None:
@@ -497,9 +503,21 @@ class OverlayHandler(BaseHTTPRequestHandler):
             return self._json(400, {"error": "index должен быть числом"})
         if number < 1:
             return self._json(400, {"error": "серия нумеруется с 1"})
-        url = kodik_url_with_episode(session.url, number)
+        if session.stream is not None and not session.stream.can_switch_episode:
+            return self._json(
+                200,
+                {
+                    "ok": False,
+                    "reason": (
+                        "этот источник не отдаёт список серий — серию нужно выбрать на сайте"
+                    ),
+                },
+            )
+        url = session.episode_url(number)
         try:
-            resolved = resolver.resolve(url, translation_index=session.translation_index)
+            resolved = resolver.resolve(
+                url, translation_index=session.translation_index, episode=number
+            )
         except resolver.ResolveError as exc:
             return self._json(200, {"ok": False, "reason": exc.message})
         session.url = url
@@ -517,7 +535,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
             200,
             {
                 "ok": True,
-                "episode": number,
+                "episode": resolved.stream.episode or number,
                 "title": session.title,
                 "sid": session.sid,
             },

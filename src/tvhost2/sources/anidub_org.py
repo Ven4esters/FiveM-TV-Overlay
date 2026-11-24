@@ -235,7 +235,9 @@ def tracks_by_episode(playlist: dict[str, Any]) -> dict[int, list[dict[str, Any]
     return result
 
 
-def pick(playlist: dict[str, Any], translation_index: int = 0) -> dict[str, Any]:
+def pick(
+    playlist: dict[str, Any], translation_index: int = 0, episode: int | None = None
+) -> dict[str, Any]:
     """Выбрать дорожку: серия 1 (или первая доступная) + озвучка по индексу.
 
     Почему первая серия, а не последняя: на странице сериала сайт сам
@@ -251,8 +253,11 @@ def pick(playlist: dict[str, Any], translation_index: int = 0) -> dict[str, Any]
     groups = tracks_by_episode(playlist)
     if not groups:
         return {}
-    first_episode = min(groups)
-    tracks = groups[first_episode]
+    # Серия, если её просили и она есть; иначе первая доступная. Проверка
+    # на «есть» обязательна: у сериала могут быть дыры в нумерации, и
+    # запрос несуществующей серии дал бы пустоту вместо понятной ошибки.
+    wanted = episode if episode and episode in groups else min(groups)
+    tracks = groups[wanted]
     index = max(0, min(translation_index, len(tracks) - 1))
     return tracks[index]
 
@@ -474,7 +479,7 @@ class AnidubOrgSource:
     def matches(self, url: str) -> bool:
         return is_anidub_org(url)
 
-    def resolve(self, url: str, translation_index: int = 0) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0, episode: int | None = None) -> Stream:
         """Ссылка на страницу → поток. Ступени проверяются по одной.
 
         Ступень, которая сломалась, видна в журнале по тексту причины:
@@ -493,7 +498,7 @@ class AnidubOrgSource:
             )
 
         playlist = self._playlist(params)
-        chosen = pick(playlist, translation_index)
+        chosen = pick(playlist, translation_index, episode)
         if not chosen:
             raise SourceFailedError(
                 self.name,
@@ -516,16 +521,24 @@ class AnidubOrgSource:
                 state=SourceState.PARTIAL,
             )
 
-        tracks = tracks_by_episode(playlist).get(int(chosen.get("episode") or 1), [])
-        episode = int(chosen.get("episode") or 1)
+        groups = tracks_by_episode(playlist)
+        tracks = groups.get(int(chosen.get("episode") or 1), [])
+        current_episode = int(chosen.get("episode") or 1)
+        # Серии наружу — по общему контракту `Stream.episodes`, как у Kodik.
+        # У anidub.org сезонов нет вовсе: серии идут одним списком.
+        episode_list = tuple(
+            {"season": "", "episode": str(number), "title": f"{number} серия"}
+            for number in sorted(groups)
+        )
         base_title = str(playlist.get("titleName") or clean_title(page) or "anidub")
         log_line = (
-            f"anidub.org: {url} → серия {episode}, {voice_title(chosen)}, {len(qualities)} варианта"
+            f"anidub.org: {url} → серия {current_episode}, "
+            f"{voice_title(chosen)}, {len(qualities)} варианта"
         )
         _log_info(log_line)
         return Stream(
             source=self.name,
-            title=f"{base_title} — серия {episode}",
+            title=f"{base_title} — серия {current_episode}",
             kind=self.kind,
             qualities=qualities,
             duration_s=int(video.get("duration") or 0),
@@ -543,6 +556,9 @@ class AnidubOrgSource:
                 }
                 for item in tracks
             ),
+            episodes=episode_list,
+            episode=current_episode,
+            can_switch_episode=len(episode_list) > 1,
             state=self.state,
             # Подпись okcdn привязана к IP. Замер громкости идёт мимо моста,
             # поэтому заголовки обязаны ехать с потоком; for okcdn.ru fetch()

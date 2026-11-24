@@ -102,6 +102,8 @@ class Session:
                 for e in (self.stream.episodes if self.stream else ())
             ],
             "episode": self.stream.episode if self.stream else 0,
+            "episodeSeason": self.stream.episode_season if self.stream else 0,
+            "canSwitchEpisode": bool(self.stream.can_switch_episode) if self.stream else False,
             "duration": self.stream.duration_s if self.stream else 0,
             # Прямой эфир: у пульта пропадает перемотка и общий таймер —
             # у live нет ни длительности, ни позиции в привычном смысле.
@@ -113,6 +115,34 @@ class Session:
                 for t in (self.stream.subtitles if self.stream else ())
             ],
         }
+
+    def episode_url(self, number: int) -> str:
+        """Ссылка этой же сессии, но с номером серии — для повторного разбора.
+
+        Зачем править ссылку, а не хранить номер отдельно: сессия живёт по
+        ссылке, и по ней же история просмотров узнаёт запись. Положив номер
+        в адрес, получаем «3 серия» отдельной записью, к которой можно
+        вернуться одним нажатием.
+
+        Как именно запомнить номер, решает ИСТОЧНИК, а не список имён в
+        сервере: у Kodik и его встроек номер читается из `?episode=N` самим
+        источником, у anidub.org номер приходит параметром и адрес трогать не
+        нужно. Поэтому спрашиваем источник, а не угадываем по названию сайта:
+        новый сериальный сайт заработает сам, если даст метод
+        `url_with_episode`.
+        """
+        if self.stream is None or not self.stream.can_switch_episode:
+            return self.url
+        try:
+            from ..sources import registry  # noqa: PLC0415
+
+            source = registry.find(self.url)
+        except Exception:  # реестр не должен ломать переключение серии
+            return self.url
+        remember = getattr(source, "url_with_episode", None)
+        if callable(remember):
+            return str(remember(self.url, number))
+        return self.url
 
     @property
     def translation_title(self) -> str:

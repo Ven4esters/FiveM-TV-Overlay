@@ -349,6 +349,55 @@ def fetch_audio_tracks(ref: KodikRef, translations: list[dict[str, Any]]) -> lis
     return tracks
 
 
+def ensure_episode_exists(
+    source_name: str,
+    episodes: list[dict[str, Any]],
+    translations: list[dict[str, Any]],
+    translation_index: int,
+    episode: int | None,
+) -> None:
+    """Есть ли у ВЫБРАННОЙ озвучки такая серия. Нет — отказ, а не подмена.
+
+    Считаем по своей озвучке, а не по общему списку: у одной 8 серий, у
+    другой — 4 (проверено живьём 25.11.2026: Amazing Dubbing и Solomon по 8,
+    Домик Сумасшедших Дабберов — 4). Иначе человек попросит 5-ю серию и
+    получит пустоту или чужую — ровно то, на что жаловались.
+    """
+    if not episode or not episodes:
+        return
+    _number, track = pick_translation(translations, translation_index)
+    count = str((track or {}).get("episode_count") or "")
+    limit = int(count) if count.isdigit() else 0
+    has_number = str(episode) in {str(e.get("episode")) for e in episodes}
+    if has_number and not (limit and episode > limit):
+        return
+    raise SourceFailedError(
+        source_name,
+        f"у выбранной озвучки нет {episode}-й серии",
+        fix=f"В этой озвучке серий: {limit}" if limit else f"Доступны серии: {len(episodes)}",
+        state=SourceState.PARTIAL,
+    )
+
+
+def pick_translation(
+    translations: list[dict[str, Any]], index: int | None
+) -> tuple[int, dict[str, Any] | None]:
+    """Какая озвучка выбрана: (номер, запись). Пустая — плеер без озвучек.
+
+    Правило одно на весь файл, чтобы поток и проверка «есть ли такая серия»
+    не разошлись: просили номер — берём его (если в списке есть), не просили
+    или ошиблись — ту, что Kodik пометил `selected`, иначе первую.
+    """
+    if not translations:
+        return 0, None
+    if index is not None and 0 <= index < len(translations):
+        return index, translations[index]
+    for number, track in enumerate(translations):
+        if track.get("selected"):
+            return number, track
+    return 0, translations[0]
+
+
 def parse_translations(html: str) -> list[dict[str, Any]]:
     """Достать список озвучек из HTML плеера.
 
@@ -381,6 +430,10 @@ def parse_translations(html: str) -> list[dict[str, Any]]:
                 "type": attrs.get("data-media-type", "seria"),
                 "media_id": attrs.get("data-media-id", ""),
                 "translation_type": attrs.get("data-translation-type", ""),
+                # Сколько серий в этой озвучке. У сайта бывает по-разному:
+                # у одной озвучки 8 серий, у другой — 4. Нужно, чтобы не
+                # открыть «5 серию» там, где их всего четыре.
+                "episode_count": attrs.get("data-episode-count", ""),
                 "selected": "selected" in match.group("attrs").lower(),
             }
         )
@@ -434,11 +487,16 @@ def pick_episode(episodes: list[dict[str, Any]], ref: KodikRef) -> tuple[str, st
         return "", ""
     if any(str(e.get("id")) == ref.video_id for e in episodes):
         return "", ""
-    wanted = ref.episode or 1
+    wanted = str(ref.episode or 1)
     picked = next(
-        (e for e in episodes if str(e.get("episode")) == str(wanted)),
+        (e for e in episodes if str(e.get("episode")) == wanted),
         episodes[0],
     )
+    # Номер, которого в списке нет, — не повод открыть другую серию молча:
+    # человек увидит не то, что просил. Отдаём первую только когда номера
+    # не было вовсе.
+    if ref.episode and str(picked.get("episode")) != wanted:
+        picked = {"id": "", "hash": ""}
     return str(picked.get("id") or ""), str(picked.get("hash") or "")
 
 
@@ -565,14 +623,30 @@ class KodikSource:
     def matches(self, url: str) -> bool:
         return parse_player_url(url) is not None
 
-    def resolve(self, url: str, translation_index: int = 0) -> Stream:
+    def url_with_episode(self, url: str, number: int) -> str:
+        """Как запомнить номер серии в ссылке. Нужно сессии и истории.
+
+        Метод есть только у источников, которые умеют переключать серии:
+        сессия спрашивает его через `getattr` и не знает имён сайтов.
+        """
+        return url_with_episode(url, number)
+
+    def resolve(self, url: str, translation_index: int = 0, episode: int | None = None) -> Stream:
         """Разобрать ссылку. translation_index — какая озвучка нужна.
+
+        `episode` — номер серии с единицы. Если он передан, ссылка получает
+        `?episode=N` (это наш параметр, Kodik его игнорирует): так номер не
+        теряется, пока ссылка ходит по сессии и истории. Если не передан,
+        берётся номер из самой ссылки, а без него — первая серия.
+
 
         У Kodik каждая озвучка — отдельный поток со своим hash, поэтому
         «переключить дорожку» нельзя: нужен повторный запрос /ftor с hash
         выбранной озвучки. Индекс, а не id: так вызывающему коду не надо
         знать про hash вообще.
         """
+        if episode is not None:
+            url = url_with_episode(url, episode)
         ref = parse_player_url(url)
         if ref is None:
             raise SourceFailedError(
@@ -595,10 +669,8 @@ class KodikSource:
         # и именно из-за неё «перевод слетал» после смены серии.
         chosen = ref
         if translations:
-            index = translation_index if 0 <= translation_index < len(translations) else 0
-            if not 0 <= translation_index < len(translations):
-                index = next((i for i, t in enumerate(translations) if t.get("selected")), 0)
-            track = translations[index]
+            _index, track = pick_translation(translations, translation_index)
+            assert track is not None  # translations непуст → track есть
             chosen = KodikRef(
                 kind=str(track.get("type") or ref.kind),
                 video_id=str(track.get("media_id") or ref.video_id),
@@ -645,6 +717,7 @@ class KodikSource:
                 )
             )
 
+        ensure_episode_exists(self.name, episodes, translations, translation_index, ref.episode)
         if not qualities:
             raise SourceFailedError(
                 self.name,
@@ -688,6 +761,7 @@ class KodikSource:
             audio_tracks=tuple(translations),
             episodes=episode_list,
             episode=current_episode if episodes else 0,
+            can_switch_episode=len(episode_list) > 1,
         )
 
 
@@ -721,6 +795,7 @@ __all__ = [
     "KodikSource",
     "decrypt_link",
     "embed_for_site",
+    "ensure_episode_exists",
     "fetch_audio_tracks",
     "fetch_links",
     "first_url",
@@ -729,6 +804,7 @@ __all__ = [
     "parse_player_url",
     "parse_translations",
     "pick_episode",
+    "pick_translation",
     "rot18",
     "translation_episodes",
     "url_with_episode",
