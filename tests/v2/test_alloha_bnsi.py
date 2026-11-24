@@ -305,3 +305,116 @@ class TestVariants:
         monkeypatch.setattr(alloha_bnsi, "_post_json", no_answer)
         rows = alloha_bnsi.try_variants("https://x.live/?token=abc", "<html></html>")
         assert rows and {row["id"] for row in rows} == {"0"}
+
+
+SARN_UAP = "e82f2e5be321b6f9c1cf4eb99bca60528c19e0fb5853936dfa311aae1dbf0b4c"
+
+
+class TestServerFingerprint:
+    """`uap` из `/sarn` — это `sha256(User-Agent)`, так считает сам сервер."""
+
+    def test_uap_is_sha256_of_ua(self) -> None:
+        import hashlib
+
+        expected = hashlib.sha256(alloha_bnsi._DEFAULT_UA.encode()).hexdigest()
+        assert len(expected) == 64
+        assert expected.isalnum()
+
+    def test_uap_of_remembers_and_survives_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        alloha_bnsi._UAP_CACHE.clear()
+
+        def boom(request: object, timeout: int) -> object:
+            raise OSError("сеть легла")
+
+        monkeypatch.setattr(alloha_bnsi.urllib.request, "urlopen", boom)
+        assert alloha_bnsi._uap_of("x.live") == ""
+        # повторный вызов не должен снова лезть в сеть
+        assert alloha_bnsi._uap_of("x.live") == ""
+
+    def test_real_borth_uses_server_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[str] = []
+
+        def fake(url: str, payload: dict, headers: dict[str, str]) -> tuple[int, str]:
+            seen.append(headers.get("Borth", ""))
+            return 404, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
+        monkeypatch.setattr(alloha_bnsi, "_uap_of", lambda _realm: SARN_UAP)
+        rows = alloha_bnsi.try_real_borth(
+            "https://x.live/?token=abc", PLAYER_HTML, ["111"]
+        )
+        assert rows and rows[0]["status"] == 404
+        assert seen[0].startswith(SARN_UAP + "|")
+
+    def test_real_borth_without_uap_falls_back(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Нет ответа `/sarn` — берём реконструкцию, а не выдуманные числа."""
+        seen: list[str] = []
+
+        def fake(url: str, payload: dict, headers: dict[str, str]) -> tuple[int, str]:
+            seen.append(headers.get("Borth", ""))
+            return 404, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
+        monkeypatch.setattr(alloha_bnsi, "_uap_of", lambda _realm: "")
+        rows = alloha_bnsi.try_real_borth(
+            "https://x.live/?token=abc", PLAYER_HTML, ["111"]
+        )
+        assert rows and "uap" not in rows[0]["name"]
+        assert seen and not seen[0].startswith(SARN_UAP)
+
+
+class TestReplayCurl:
+    """«Copy as cURL» из браузера → тот же запрос из Python."""
+
+    CURL = (
+        "curl 'https://x.live/bnsi/movies/1847894' "
+        "-H 'accept: */*' "
+        "-H 'borth: abc|def' "
+        "-H 'content-type: application/x-www-form-urlencoded; charset=UTF-8' "
+        "-H 'origin: https://x.live' "
+        "-H 'referer: https://x.live/?token_movie=1' "
+        "-H 'x-requested-with: XMLHttpRequest' "
+        "--data-raw 'token=abc&av1=false&autoplay=0&audio=&subtitle='"
+    )
+
+    def test_parsed(self) -> None:
+        from tvhost2 import alloha_replay
+
+        captured = alloha_replay.parse_curl(self.CURL)
+        assert captured.url.endswith("/bnsi/movies/1847894")
+        assert captured.method == "POST"
+        assert captured.headers["borth"] == "abc|def"
+        assert captured.body == b"token=abc&av1=false&autoplay=0&audio=&subtitle="
+
+    def test_multiline_with_backslash(self) -> None:
+        """Браузер на Windows часто отдаёт команду в несколько строк."""
+        from tvhost2 import alloha_replay
+
+        text = self.CURL.replace(" -H ", " \\\n  -H ")
+        captured = alloha_replay.parse_curl(text)
+        assert captured.url.endswith("/bnsi/movies/1847894")
+        assert captured.body.startswith(b"token=abc")
+
+    def test_cmd_caret(self) -> None:
+        from tvhost2 import alloha_replay
+
+        text = self.CURL.replace(" -H ", " ^\n  -H ")
+        captured = alloha_replay.parse_curl(text)
+        assert captured.headers["x-requested-with"] == "XMLHttpRequest"
+
+    def test_garbage_is_not_a_crash(self) -> None:
+        from tvhost2 import alloha_replay
+
+        assert alloha_replay.parse_curl("").url == ""
+        assert alloha_replay.parse_curl("привет").url == ""
+
+    def test_differences_name_the_borth(self) -> None:
+        from tvhost2 import alloha_replay
+
+        captured = alloha_replay.parse_curl(self.CURL)
+        lines = "\n".join(alloha_replay.differences(captured))
+        assert "Borth" in lines

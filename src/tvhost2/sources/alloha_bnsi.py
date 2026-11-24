@@ -431,6 +431,112 @@ VARIANT_IDS = 2
 """Сколько номеров пробовать на каждый вариант: первый (активный) и главный."""
 
 
+def try_real_borth(embed: str, player_html: str, ids: list[str] | None = None) -> list[dict]:
+    """Проверить `Borth`, собранный ПРАВДОПОДОБНО, а не из выдуманных чисел.
+
+    Что выяснилось из расшифровки app.js (функция `c0`, её зовёт `c1` из `iT`):
+    первая половина `Borth` — это `sha256(join('||'))` от девяти значений:
+
+        navigator.userAgent
+        Intl.DateTimeFormat().resolvedOptions().timeZone
+        ширина и высота экрана
+        navigator.language
+        navigator.deviceMemory
+        navigator.hardwareConcurrency
+        canvas.toDataURL()            — отпечаток canvas
+        WebGL vendor|renderer          — отпечаток видеокарты
+        длина аудио-отпечатка
+
+    Canvas, WebGL и аудио из Python не получить, поэтому берём два варианта,
+    которые сервер точно может проверить сам:
+
+      * `uap` из ответа `/sarn` — это `sha256(User-Agent)`; сервер считает его
+        сам и, возможно, ждёт именно его;
+      * `sha256(UA|пояс|экран|язык|память|ядра)` — наша реконструкция `c0`
+        без браузерных полей.
+
+    Функция не бросает исключений: `/sarn` не ответил — остаётся вторая
+    половина списка (реконструкция без браузерных полей).
+    """
+    numbers = (ids or file_ids(player_html, embed))[:VARIANT_IDS]
+    if not numbers:
+        numbers = ["0"]
+    suffix = borth_suffix(meta_of(player_html)) if meta_of(player_html) else ""
+    token = _site_token(embed)
+    origin = _origin_of(embed)
+    realm = urllib.parse.urlsplit(embed).hostname or ""
+
+    plans: list[tuple[str, str]] = []
+    uap = _uap_of(realm)
+    if uap:
+        plans.append(("Borth — отпечаток сервера (uap)", uap))
+    joined = "||".join([_DEFAULT_UA, "Europe/Moscow", "1920x1080", "ru-RU", "8", "8"])
+    plans.append(
+        (
+            "Borth — sha256(UA|пояс|экран|язык|память|ядра)",
+            hashlib.sha256(joined.encode()).hexdigest(),
+        )
+    )
+
+    result: list[dict] = []
+    for name, first in plans:
+        headers = {
+            "Origin": origin,
+            "Referer": embed,
+            "X-Requested-With": "XMLHttpRequest",
+            "Borth": f"{first}|{suffix}",
+        }
+        for ident in numbers:
+            url = bnsi_path(embed, kind_of(player_html), ident)
+            status, body = _post_form(url, {"token": token, "av1": 0, "autoplay": 0}, headers)
+            ok = "hlsSource" in (body or "")
+            result.append(
+                {
+                    "name": name,
+                    "slug": _slug(name),
+                    "id": ident,
+                    "status": status,
+                    "body": body,
+                    "ok": ok,
+                }
+            )
+            if ok:
+                return result
+    return result
+
+
+_UAP_CACHE: dict[str, str] = {}
+"""`uap` из `/sarn` на домен. Сервер даёт новый `challenge` каждый раз, а
+`uap` — это `sha256(User-Agent)`, он от повторов не меняется."""
+
+
+def _uap_of(realm: str) -> str:
+    """`uap` из `/sarn` — отпечаток клиента по мнению самого сервера.
+
+    Так его запрашивает плеер: `fetch('/sarn', {headers: {acceptis: <домен>}})`,
+    и сервер отвечает `{challenge, nonce, uap}`, где `uap` — sha256(User-Agent).
+    Пусто — если сервер не ответил.
+    """
+    if realm in _UAP_CACHE:
+        return _UAP_CACHE[realm]
+    answer = ""
+    if realm:
+        request = urllib.request.Request(
+            f"https://{realm}/sarn",
+            headers={**_common_headers(), "Acceptis": realm},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=BNSI_TIMEOUT) as response:
+                payload = json.loads(response.read().decode("utf-8", "replace"))
+            value = payload.get("uap")
+            if isinstance(value, str):
+                answer = value
+        except Exception:  # сеть бывает любой — тогда просто нет отпечатка
+            answer = ""
+    _UAP_CACHE[realm] = answer
+    return answer
+
+
 def try_variants(embed: str, player_html: str, ids: list[str] | None = None) -> list[dict]:
     """Перебрать варианты запроса, пока один не вернёт `hlsSource`.
 

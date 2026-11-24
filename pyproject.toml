@@ -121,7 +121,8 @@ max-complexity = 15
 # Диагностика Alloha (`python -m tvhost2.alloha_check`) — это CLI для
 # заказчика: печать в консоль — её интерфейс, а не отладочный вывод.
 # Ветки линейные (шаг 1 → 2 → 3), поэтому порог по числу операторов снят.
-"src/tvhost2/alloha_check.py" = ["T201", "PLR0915", "SLF001"]
+"src/tvhost2/alloha_check.py" = ["T201", "PLR0915", "SLF001", "PLC0415"]
+"src/tvhost2/alloha_replay.py" = ["T201", "PLR0915", "PLR0912", "PLC0415", "PLR2004"]
 
 [tool.ruff.format]
 quote-style = "double"

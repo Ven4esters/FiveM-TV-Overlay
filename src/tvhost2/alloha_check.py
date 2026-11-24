@@ -31,6 +31,9 @@ from .sources import alloha, alloha_bnsi
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / "alloha_check"
 
+Samples = list[str]
+"""Строки отчёта. Собираются по ходу, чтобы в конце сохранить summary.txt."""
+
 
 def pick_embed(info: dict[str, Any], tracks: list[dict[str, str]], page_url: str) -> str:
     """Встройка, с которой имеет смысл работать.
@@ -62,6 +65,154 @@ def _line(title: str) -> None:
     print(f"\n── {title} " + "─" * max(0, 60 - len(title)))
 
 
+class Report:
+    """Печатает строку и тут же кладёт её в файл отчёта."""
+
+    def __init__(self, stamp: str) -> None:
+        self.stamp = stamp
+        self.lines: list[str] = []
+
+    def say(self, text: str) -> None:
+        print(text)
+        self.lines.append(text)
+
+    def save(self) -> None:
+        path = OUT / f"{self.stamp}_summary.txt"
+        path.write_text("\n".join(self.lines), encoding="utf-8")
+        print(f"\nОтчёт: {path}")
+        with contextlib.suppress(EOFError, KeyboardInterrupt):
+            input("Нажмите Enter, чтобы закрыть окно… ")
+
+
+def _setup_block(report: Report, page_url: str) -> tuple[bool, str, list[dict[str, str]]]:
+    """Шаг 1: найти встройку так же, как это делает приложение."""
+    _line("1. Настройка источника (как в приложении)")
+    source = alloha.AllohaSource() if hasattr(alloha, "AllohaSource") else None
+    if source is None:  # pragma: no cover - на случай переименования класса
+        report.say("НЕ НАШЁЛ класс источника Alloha — проверьте версию приложения")
+        return False, "", []
+
+    # Приватный метод осознанно: диагностика должна идти тем же путём,
+    # что и обычное открытие ссылки, включая кэш.
+    info = source._info_of(page_url)
+    if not info:
+        report.say("На странице нет встройки Alloha — ссылка не та либо плеер грузится скриптом")
+        return False, "", []
+
+    tracks: list[dict[str, str]] = list(info.get("tracks") or [])
+    embed = pick_embed(info, tracks, page_url)
+    report.say(f"встройка: {embed[:110]}")
+    token = alloha.site_token(embed)
+    report.say(f"токен сайта: {token or 'НЕ НАЙДЕН — открытый API будет молчать'}")
+    report.say(f"озвучек: {len(tracks)}" + ("" if tracks else " (API не ответил)"))
+    for position, track in enumerate(tracks, 1):
+        report.say(f"   {position}. {track.get('title', '?')}  (id {track.get('id', '?')})")
+    return True, embed, tracks
+
+
+def _player_block(report: Report, embed: str, page_url: str) -> tuple[str, list[str]]:
+    """Шаг 2: скачать страницу плеера и достать из неё номера файлов."""
+    _line("2. Страница плеера")
+    player = alloha_bnsi.page_text(embed, page_url)
+    if not player:
+        report.say("Плеер не отдал страницу. Если это регион — см. пункт 4.")
+        return "", []
+    report.say(f"получено {len(player)} байт")
+    blocked = alloha.blocked_by_region(player)
+    report.say(f"признак отказа по региону: {'ДА' if blocked else 'нет'}")
+    meta = alloha_bnsi.meta_of(player)
+    report.say(f"мета viewporti: {'есть, ' + str(len(meta)) + ' символов' if meta else 'НЕТ'}")
+    ids = alloha_bnsi.file_ids(player)
+    report.say(f"файлов в fileList: {len(ids)} → {', '.join(ids[:6]) or '—'}")
+    report.say(f"тип: {alloha_bnsi.kind_of(player)}")
+    report.say(f"Borth собран: {len(alloha_bnsi.borth_for(player))} символов")
+    return player, ids
+
+
+def _plain_block(report: Report, stamp: str, embed: str, player: str) -> bool:
+    """Шаг 3: обычный запрос — по одной попытке на номер файла."""
+    _line("3. Запрос адресов (POST /bnsi)")
+    tries = alloha_bnsi.attempts(embed, player)
+    report.say(f"попыток: {len(tries)} (по одной на номер файла)")
+    for attempt in tries:
+        verdict = "ok" if "hlsSource" in str(attempt.get("body")) else "нет"
+        report.say(f"   id {attempt.get('id')} → {attempt.get('status')} (hlsSource: {verdict})")
+    body = str((tries[-1] if tries else {}).get("body") or "")
+    sources = alloha_bnsi.sources_of(body)
+    if not sources:
+        report.say(f"пусто. Тело ответа ({len(body)} байт): {body[:200]}")
+        if alloha_bnsi.asked_region(body):
+            report.say("ответ — «контент не найден»: Alloha не отдаёт адреса этому запросу.")
+        (OUT / f"{stamp}_bnsi_response.txt").write_text(body or "", encoding="utf-8")
+        return False
+
+    report.say(f"hlsSource: {len(sources)} озвучек — ПОЛУЧЕНО")
+    qualities = alloha.qualities_of_sources(sources, 0)
+    report.say(f"качеств в первой озвучке: {len(qualities)}")
+    for quality in qualities[:5]:
+        report.say(f"   {quality.height}p — {quality.url[:90]}")
+    name = f"{stamp}_hlsSource.json"
+    (OUT / name).write_text(body, encoding="utf-8")
+    report.say(f"тело ответа сохранено: {name}")
+    return True
+
+
+def _variant_block(report: Report, embed: str, player: str, ids: list[str]) -> str:
+    """Шаг 3б: перебрать варианты тела и заголовков. Пусто — если не вышло."""
+    _line("3б. Перебор вариантов запроса")
+    report.say("Обычный вариант не дал адресов — проверяю, не в запросе ли дело.")
+    rows = alloha_bnsi.try_variants(embed, player, ids)
+    for row in rows:
+        report.say(
+            f"   {row['name'][:38]:38s} id {row['id']} → {row['status']}"
+            + ("   ← ЕСТЬ hlsSource!" if row["ok"] else "")
+        )
+        if row["ok"]:
+            return str(row["body"])
+    report.say("ни один вариант не подошёл: дело не в теле и не в заголовках.")
+    return ""
+
+
+def _borth_block(report: Report, embed: str, player: str, ids: list[str]) -> str:
+    """Шаг 3в: `Borth` с отпечатком, который считает сам сервер (`/sarn`)."""
+    _line("3в. Отпечаток Borth из ответа сервера")
+    realm = alloha_bnsi._origin_of(embed).split("//")[-1]
+    uap = alloha_bnsi._uap_of(realm)
+    if uap:
+        report.say(f"сервер считает отпечаток клиента: {uap[:24]}… ({len(uap)} символов)")
+    else:
+        report.say("/sarn не ответил — отпечаток сервера получить не удалось")
+    rows = alloha_bnsi.try_real_borth(embed, player, ids)
+    report.say(f"вариантов: {len(rows)}")
+    for row in rows:
+        report.say(
+            f"   {row['name'][:44]:44s} id {row['id']} → {row['status']}"
+            + ("   ← ЕСТЬ hlsSource!" if row["ok"] else "")
+        )
+        if row["ok"]:
+            return str(row["body"])
+    if not rows:
+        report.say("проверить не удалось: /sarn не дал отпечаток.")
+    return ""
+
+
+def _final(report: Report) -> None:
+    """Шаг 4: что это значит и что делать дальше."""
+    _line("4. Что это значит")
+    report.say(
+        "Если на шаге 2 страница плеера не пришла — Alloha закрывает по региону "
+        "и это не лечится на нашей стороне."
+    )
+    report.say(
+        "Если страница пришла, а шаг 3 пуст — остаётся снять запрос в браузере: "
+        "F12 → Network → фильтр bnsi → правой кнопкой → Copy as cURL."
+    )
+    report.say(
+        "Вставьте это в alloha_check\\curl.txt и запустите replay_alloha.bat — "
+        "он повторит запрос плеера один в один и покажет отличие от нашего."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or not args[0].startswith("http"):
@@ -74,117 +225,40 @@ def main(argv: list[str] | None = None) -> int:
     OUT.mkdir(exist_ok=True)
     print(f"Отчёты складываю в: {OUT}")
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    report: list[str] = [f"страница: {page_url}", ""]
+    report = Report(stamp)
+    report.say(f"страница: {page_url}")
+    report.say("")
 
-    def say(text: str) -> None:
-        print(text)
-        report.append(text)
-
-    _line("1. Настройка источника (как в приложении)")
-
-    source = alloha.AllohaSource() if hasattr(alloha, "AllohaSource") else None
-    if source is None:  # pragma: no cover - на случай переименования класса
-        say("НЕ НАШЁЛ класс источника Alloha — проверьте версию приложения")
+    ok, embed, _tracks = _setup_block(report, page_url)
+    if not ok:
+        report.save()
         return 1
 
-    # Приватный метод осознанно: диагностика должна идти тем же путём,
-    # что и обычное открытие ссылки, включая кэш.
-    info = source._info_of(page_url)
-    if not info:
-        say("На странице нет встройки Alloha — ссылка не та либо плеер грузится скриптом")
-        _save(stamp, report)
-        return 1
-
-    tracks: list[dict[str, str]] = list(info.get("tracks") or [])
-    embed = pick_embed(info, tracks, page_url)
-    say(f"встройка: {embed[:110]}")
-    token = alloha.site_token(embed)
-    say(f"токен сайта: {token or 'НЕ НАЙДЕН — открытый API будет молчать'}")
-    say(f"озвучек: {len(tracks)}" + ("" if tracks else " (API не ответил)"))
-    for position, track in enumerate(tracks, 1):
-        say(f"   {position}. {track.get('title', '?')}  (id {track.get('id', '?')})")
-
-    _line("2. Страница плеера")
-    player = alloha_bnsi.page_text(embed, page_url)
+    player, ids = _player_block(report, embed, page_url)
     if not player:
-        say("Плеер не отдал страницу. Если это регион — см. пункт 5.")
-    else:
-        say(f"получено {len(player)} байт")
-        blocked = alloha.blocked_by_region(player)
-        say(f"признак отказа по региону: {'ДА' if blocked else 'нет'}")
-        meta = alloha_bnsi.meta_of(player)
-        say(f"мета viewporti: {'есть, ' + str(len(meta)) + ' символов' if meta else 'НЕТ'}")
-        ids = alloha_bnsi.file_ids(player)
-        say(f"файлов в fileList: {len(ids)} → {', '.join(ids[:6]) or '—'}")
-        say(f"тип: {alloha_bnsi.kind_of(player)}")
-        borth = alloha_bnsi.borth_for(player)
-        say(f"Borth собран: {len(borth)} символов")
+        _final(report)
+        report.save()
+        return 1
 
-        _line("3. Запрос адресов (POST /bnsi)")
-        tries = alloha_bnsi.attempts(embed, player)
-        say(f"попыток: {len(tries)} (по одной на номер файла)")
-        for attempt in tries:
-            verdict = "ok" if "hlsSource" in str(attempt.get("body")) else "нет"
-            say(f"   id {attempt.get('id')} → {attempt.get('status')} (hlsSource: {verdict})")
-        body = str((tries[-1] if tries else {}).get("body") or "")
-        sources = alloha_bnsi.sources_of(body)
-        if sources:
-            say(f"hlsSource: {len(sources)} озвучек — ПОЛУЧЕНО")
-            qualities = alloha.qualities_of_sources(sources, 0)
-            say(f"качеств в первой озвучке: {len(qualities)}")
-            for quality in qualities[:5]:
-                say(f"   {quality.height}p — {quality.url[:90]}")
-            name = f"{stamp}_hlsSource.json"
-            (OUT / name).write_text(body, encoding="utf-8")
-            say(f"тело ответа сохранено: {name}")
-            _save(stamp, report)
-            _line("ИТОГ")
-            say("поток получен. Пришлите summary.txt и json — сверю разбор с живым ответом.")
-            return 0
+    if _plain_block(report, stamp, embed, player):
+        report.save()
+        _line("ИТОГ")
+        report.say("поток получен. Пришлите summary.txt и json — сверю разбор.")
+        return 0
 
-        say(f"пусто. Тело ответа ({len(body)} байт): {body[:200]}")
-        if alloha_bnsi.asked_region(body):
-            say("ответ — «контент не найден»: это региональный отказ Alloha.")
-        (OUT / f"{stamp}_bnsi_response.txt").write_text(body or "", encoding="utf-8")
+    body = _variant_block(report, embed, player, ids) or _borth_block(report, embed, player, ids)
+    if body:
+        name = f"{stamp}_hlsSource.json"
+        (OUT / name).write_text(body, encoding="utf-8")
+        report.say(f"рабочий ответ сохранён: {name}")
+        report.save()
+        _line("ИТОГ")
+        report.say("поток получен перебором — пришлите summary.txt и json.")
+        return 0
 
-        _line("3б. Перебор вариантов запроса")
-        say("Обычный вариант не дал адресов — проверяю, не в запросе ли дело.")
-        variants = alloha_bnsi.try_variants(embed, player, ids)
-        for row in variants:
-            say(
-                f"   {row['name']:34s} id {row['id']} → {row['status']}"
-                + ("   ← ЕСТЬ hlsSource!" if row["ok"] else "")
-            )
-            if row["ok"]:
-                name = f"{stamp}_variant_{row['slug']}.json"
-                (OUT / name).write_text(row["body"], encoding="utf-8")
-                say(f"   рабочий вариант сохранён: {name}")
-                say(f"   ВАЖНО: сообщите название варианта — «{row['name']}»")
-                _save(stamp, report)
-                _line("ИТОГ")
-                say("поток получен перебором — пришлите summary.txt и json.")
-                return 0
-        say("ни один вариант не подошёл: значит дело не в теле и не в заголовках.")
-
-    _line("4. Что это значит")
-    say(
-        "Если на шаге 2 страница плеера не пришла — Alloha закрывает по региону, "
-        "и это не лечится на нашей стороне."
-    )
-    say(
-        "Если пришла, но шаг 3 пуст — пришлите summary.txt: по коду ответа будет "
-        "видно, сверяет ли сервер отпечаток браузера строже, чем мы думали."
-    )
-    _save(stamp, report)
+    _final(report)
+    report.save()
     return 1
-
-
-def _save(stamp: str, report: list[str]) -> None:
-    path = OUT / f"{stamp}_summary.txt"
-    path.write_text("\n".join(report), encoding="utf-8")
-    print(f"\nОтчёт: {path}")
-    with contextlib.suppress(EOFError, KeyboardInterrupt):
-        input("Нажмите Enter, чтобы закрыть окно… ")
 
 
 if __name__ == "__main__":
