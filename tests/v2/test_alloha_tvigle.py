@@ -307,6 +307,44 @@ class TestTvigle:
         assert tvigle._height_from_bitrate(2_500_000) == 720
         assert tvigle._height_from_bitrate(500_000) == 360
 
+    def test_master_unreachable_keeps_one_quality(self, monkeypatch):
+        """Мастер не скачался — всё равно одно качество, а не пустой список.
+
+        Живой баг 24.11.2026 (вторая серия): если CDN tvigle не ответил на
+        мастер, `qualities` оставался пустым, и мост отвечал 502 —
+        заказчик видел «master.m3u8: HTTP 502» на исправном видео.
+        Сайт поток отдал, значит адрес рабочий: отдаём его как есть.
+        """
+        def fake_fetch(url: str) -> str:
+            if "/api/play/video/" in url:  # API: поток есть
+                return (
+                    '{"playlist": {"items": [{"title": "Фильм",'
+                    ' "videos": {"720": "https://cdn/m.m3u8"}}]}}'
+                )
+            if "www.tvigle.ru" in url:  # страница: только номер видео
+                return '<meta property="og:video" content="https://cloud.tvigle.ru/video/5838418/">'
+            return ""  # мастер не скачался
+
+        monkeypatch.setattr(tvigle, "fetch_text", fake_fetch)
+        stream = tvigle.TvigleSource().resolve("https://www.tvigle.ru/video/x/")
+        assert len(stream.qualities) == 1  # не пусто → мост не ответит 502
+        assert stream.qualities[0].url == "https://cdn/m.m3u8"
+        assert stream.qualities[0].height == 720  # ключ «720» из videos, не выдумка
+        assert stream.qualities[0].bitrate_kbps > 0
+
+    def test_fallback_height_from_key(self):
+        """Высота фолбэка — из ключа `videos`, а не всегда 720."""
+        q = tvigle._fallback_quality("https://c/240.m3u8", {"240": "https://c/240.m3u8"})
+        assert (q.height, q.width) == (240, 427)
+        # ключ нечисловой («hls» — мастер): остаётся подпись 720, это не ложь
+        q2 = tvigle._fallback_quality("https://c/m.m3u8", {"hls": "https://c/m.m3u8"})
+        assert q2.height == 720
+
+    def test_master_with_variants_not_replaced(self):
+        """А если мастер разобрался — фолбэк не подменяет настоящие качества."""
+        master = "#EXTM3U\n#EXT-X-STREAM-INF:RESOLUTION=1920x1080\nhttps://c/1.m3u8\n"
+        assert len(tvigle.qualities_from_master(master)) == 1
+
 
 # ------------------------------------------------------- отказ человеку
 

@@ -159,6 +159,17 @@ class TestBuildMaster:
     def test_empty_qualities_still_valid(self) -> None:
         assert hls.build_master([]).startswith("#EXTM3U")
 
+    def test_unknown_height_omits_resolution(self) -> None:
+        """Высота неизвестна (0x0) — `RESOLUTION` не пишем вовсе.
+
+        `RESOLUTION=0x0` невалиден и роняет разбор у hls.js. Такое качество
+        появляется у tvigle, когда мастер не скачался (честный фолбэк).
+        """
+        m = hls.build_master([(0, 0, 0, "https://cdn/m.m3u8")])
+        assert "RESOLUTION" not in m
+        assert "BANDWIDTH=1000" in m  # не 0 — ноль тоже невалиден
+        assert "https://cdn/m.m3u8" in m
+
 
 class TestErrorPlaylist:
     def test_is_valid_m3u8(self) -> None:

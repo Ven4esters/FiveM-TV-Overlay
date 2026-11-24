@@ -113,7 +113,13 @@ def build_master(qualities: list[tuple[int, int, int, str]], audio_url: str = ""
             f'DEFAULT=YES,AUTOSELECT=YES,URI="{audio_url}"'
         )
     for height, width, bitrate_kbps, url in sorted(qualities, key=lambda q: q[0], reverse=True):
-        band = f"BANDWIDTH={max(bitrate_kbps, 1) * 1000},RESOLUTION={width}x{height}"
+        band = f"BANDWIDTH={max(bitrate_kbps, 1) * 1000}"
+        if height > 0 and width > 0:
+            band += f",RESOLUTION={width}x{height}"
+        # Высота может быть неизвестна (мастер источника не разобрался) —
+        # тогда RESOLUTION просто не пишем. `RESOLUTION=0x0` невалиден и
+        # ломает разбор у hls.js, а BANDWIDTH по спецификации необязателен
+        # только в крайнем случае, поэтому его оставляем всегда.
         if audio_url:
             band += ',AUDIO="audio"'
         lines.append(f"#EXT-X-STREAM-INF:{band}")

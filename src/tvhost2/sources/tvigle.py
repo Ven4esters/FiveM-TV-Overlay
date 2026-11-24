@@ -71,15 +71,25 @@ def stream_urls(videos: object) -> list[str]:
     Поле приходит словарём, где ключ — качество («hls», «240»…), а значение —
     адрес. Ключи не документированы, поэтому берём только те значения, что
     похожи на m3u8: остальное (постеры, реклама) нам не нужно.
+
+    Порядок — от высокого качества к низкому: ключ-число и есть высота
+    («720» → 720), а «hls»/«auto» — мастер без явной высоты, они идут
+    первыми. Раньше порядок был «как в словаре», то есть по воле сайта:
+    первым мог оказаться 240p, и мы разбирали качества именно из него.
     """
-    found: list[str] = []
+    found: list[tuple[int, str]] = []
     if not isinstance(videos, dict):
-        return found
-    for value in videos.values():
+        return []
+    for key, value in videos.items():
         text = str(value or "")
-        if ".m3u8" in text and text not in found:
-            found.append(text)
-    return found
+        if ".m3u8" not in text:
+            continue
+        digits = re.sub(r"\D", "", str(key))
+        rank = int(digits) if digits else 10_000  # «hls»/«auto» — мастер, он выше всех
+        if text not in [u for _, u in found]:
+            found.append((rank, text))
+    found.sort(key=lambda item: item[0], reverse=True)
+    return [url for _, url in found]
 
 
 def play_item(data: object) -> dict:
@@ -225,6 +235,15 @@ class TvigleSource:
         duration_ms = int(item.get("durationMilliseconds") or 0)
         best = urls[0]
         qualities = qualities_from_master(safe_fetch(best)) if best.endswith(".m3u8") else []
+        if not qualities:
+            # Мастер не скачался или в нём ни одного варианта — это НЕ повод
+            # для 502 (живой баг 24.11.2026: заказчик видел «master.m3u8:
+            # HTTP 502» на исправном видео).
+            #
+            # Высоту НЕ выдумываем: Quality запрещает нули, и правильно —
+            # ABR верит числам (ERR-067). Если `videos` — не мастер, а набор
+            # по качествам, ключ и есть реальная высота («720» → 720).
+            qualities = [_fallback_quality(best, item.get("videos"))]
         return Stream(
             source=_NAME,
             title=title,
@@ -250,3 +269,38 @@ def safe_fetch(url: str) -> str:
         return fetch_text(url)
     except FetchError:
         return ""
+
+
+def _fallback_quality(url: str, videos: object) -> Quality:
+    """Одно качество из адреса, когда мастер не разобрался.
+
+    Высота обязана быть настоящей (Quality не принимает нули, ERR-067).
+    Источники правды по порядку:
+
+      1. ключ в `videos`, совпадающий с этим адресом: у tvigle это высота
+         («720») либо слово «hls»/«auto» для мастера;
+      2. иначе 720x1280 — самый частый формат tvigle. Это подпись в списке
+         качеств, а не заявление о битрейте: ABR смотрит на BANDWIDTH,
+         который мост возьмёт из настоящего мастера.
+    """
+    height = 0
+    if isinstance(videos, dict):
+        for key, value in videos.items():
+            if str(value or "") != url:
+                continue
+            digits = re.sub(r"\D", "", str(key))
+            if digits:
+                height = int(digits)
+    if not height:
+        height = 720  # только подпись: реальную высоту даст мастер в мосте
+    width = round(height * 16 / 9)
+    return Quality(
+        height=height,
+        width=width,
+        # Та же оценка, что в `base.pick_hls_qualities`, когда сайт не назвал
+        # битрейт: ~0.1 бит на пиксель кадра. Это догадка, и она записана
+        # здесь честно — ABR всё равно уточнит по настоящему мастеру.
+        bitrate_kbps=max(1, round(width * height * 30 / 10_000)),
+        url=url,
+        nominal_height=height,
+    )
