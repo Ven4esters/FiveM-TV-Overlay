@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -101,6 +102,11 @@ def fetch(
     """
     if not url:
         raise FetchError("пустой адрес", 400)
+    if url.startswith("file://"):
+        # Локальный файл вместо сети. Нужен тестам и отладке: можно прогнать
+        # весь путь «мост → плейлист → сегмент» на заготовленном потоке, не
+        # завися от доступности источника. В обычной работе не используется.
+        return _fetch_file(url, max_bytes)
     # не-ASCII в адресе ломает putrequest (это был реальный сбой ERR-081)
     safe_url = urllib.parse.quote(url, safe=":/?&=#%+@!$'()*,;[]~")
     request = urllib.request.Request(safe_url, headers=headers_for(url, extra_headers))
@@ -134,6 +140,34 @@ def fetch(
         raise FetchError(f"недопустимые символы в адресе: {exc}", 400) from exc
     except OSError as exc:
         raise FetchError(f"обрыв связи: {exc.strerror or exc}", 502) from exc
+
+
+def _fetch_file(url: str, max_bytes: int | None) -> Response:
+    """Прочитать локальный файл по file:// — с теми же Response и ошибками."""
+    path = Path(urllib.parse.unquote(urllib.parse.urlparse(url).path))
+    try:
+        body = path.read_bytes()
+    except OSError as exc:
+        raise FetchError(f"нет локального файла: {path.name}", 404) from exc
+    if max_bytes:
+        body = body[:max_bytes]
+    return Response(
+        status=200,
+        body=body,
+        headers={"content-type": _guess_type(path)},
+        final_url=url,
+    )
+
+
+def _guess_type(path: Path) -> str:
+    """Тип содержимого для тестовых файлов: плейлист, TS или аудио."""
+    if path.suffix in (".m3u8", ".m3u"):
+        return "application/vnd.apple.mpegurl"
+    if path.suffix == ".ts":
+        return "video/mp2t"
+    if path.suffix in (".aac", ".m4a"):
+        return "audio/aac"
+    return "application/octet-stream"
 
 
 def fetch_text(

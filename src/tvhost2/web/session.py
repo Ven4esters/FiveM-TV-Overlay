@@ -91,6 +91,9 @@ class Session:
                 t.get("title", "") for t in (self.stream.audio_tracks if self.stream else ())
             ],
             "duration": self.stream.duration_s if self.stream else 0,
+            # Прямой эфир: у пульта пропадает перемотка и общий таймер —
+            # у live нет ни длительности, ни позиции в привычном смысле.
+            "isLive": bool(self.stream.is_live) if self.stream else False,
         }
 
     @property

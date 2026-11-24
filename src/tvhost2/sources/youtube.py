@@ -29,6 +29,7 @@ import logging
 import re
 from typing import Any
 
+from ..core import mux
 from ..core.errors import SourceFailedError
 from ..core.models import Quality, SourceState, Stream, StreamKind, sort_qualities
 from .base import YtDlpSource, extract_info
@@ -113,6 +114,30 @@ class YouTubeSource(YtDlpSource):
                 return fmt
         return None
 
+    @staticmethod
+    def _audio_file(info: dict[str, Any]) -> str:
+        """Прямой аудиофайл — для аварийной склейки, когда HLS-аудио нет.
+
+        Берём m4a (`140`), на крайний случай любой `acodec != none` без видео.
+        Такие дорожки нельзя вставить в HLS-мастер, но ffmpeg их прочитает.
+        """
+        candidates = []
+        for fmt in info.get("formats") or []:
+            if fmt.get("height") or (fmt.get("vcodec") or "none") != "none":
+                continue
+            if (fmt.get("acodec") or "none") == "none":
+                continue
+            if "m3u8" in str(fmt.get("protocol") or ""):
+                continue  # HLS-аудио разбирается отдельно
+            url = str(fmt.get("url") or "")
+            if url:
+                candidates.append((str(fmt.get("format_id") or ""), url))
+        # 140 — AAC 128k, самый совместимый; дальше по порядку.
+        for fmt_id, url in candidates:
+            if fmt_id == "140":
+                return url
+        return candidates[0][1] if candidates else ""
+
     def build_qualities(self, info: dict[str, Any]) -> tuple[Quality, ...]:
         found: list[Quality] = []
         for height, fmt in self._video_hls(info).items():
@@ -134,16 +159,7 @@ class YouTubeSource(YtDlpSource):
 
     def resolve(self, url: str) -> Stream:
         info = extract_info(url, **self.extractor_opts())
-        if info.get("is_live"):
-            raise SourceFailedError(
-                self.name,
-                "прямой эфир YouTube пока не поддерживается",
-                fix=(
-                    "Живые трансляции требуют склейки на лету — это следующий этап. "
-                    "Обычные видео и записи работают"
-                ),
-                state=SourceState.PARTIAL,
-            )
+        is_live = bool(info.get("is_live"))
 
         qualities = self.build_qualities(info)
         audio = self._audio_hls(info)
@@ -155,22 +171,69 @@ class YouTubeSource(YtDlpSource):
                 state=SourceState.PARTIAL,
             )
         if audio is None:
+            # Аварийный путь: HLS-аудио нет, но есть прямой файл. Склеиваем
+            # ffmpeg-ом в локальный HLS. Без ffmpeg — честно говорим, что не
+            # выйдет, вместо «видео играет без звука».
+            audio_file = self._audio_file(info)
+            if audio_file and mux.available():
+                return self._via_mux(info, qualities, audio_file, is_live)
             raise SourceFailedError(
                 self.name,
-                "YouTube не отдал аудио-дорожку",
-                fix="Попробуйте другую ссылку: у некоторых видео звук отдаётся только в браузере",
+                "YouTube не отдал аудио-дорожку в HLS",
+                fix=(
+                    "Нужен ffmpeg для склейки звука: положите ffmpeg.exe рядом с приложением"
+                    if audio_file
+                    else "Попробуйте другую ссылку: у этого видео звук отдаётся только в браузере"
+                ),
                 state=SourceState.PARTIAL,
             )
 
         return Stream(
             source=self.name,
-            title=str(info.get("title") or "").strip() or "YouTube",
+            title=str(info.get("title") or "").strip()
+            or ("YouTube — эфир" if is_live else "YouTube"),
             kind=StreamKind.HLS,
             qualities=qualities,
             audio_url=str(audio.get("url") or ""),
-            duration_s=int(info.get("duration") or 0),
-            is_live=False,
+            # У эфира длительности нет: yt-dlp отдаёт для live либо 0, либо
+            # момент начала трансляции. Ноль правильнее — пульт не рисует
+            # таймер и не пытается считать проценты.
+            duration_s=0 if is_live else int(info.get("duration") or 0),
+            is_live=is_live,
             state=self.state,
+        )
+
+    def _via_mux(
+        self,
+        info: dict[str, Any],
+        qualities: tuple[Quality, ...],
+        audio_file: str,
+        is_live: bool,
+    ) -> Stream:
+        """Поток, склеенный из видео-плейлиста и отдельного аудиофайла.
+
+        Видео берём в лучшем качестве: при склейке переключать качество
+        нельзя — ffmpeg уже в работе. Это цена аварийного пути, и она
+        приемлема: таких видео мало.
+        """
+        best = qualities[0]
+        muxed = mux.muxed_for(best.url, audio_file)
+        if muxed is None:  # ffmpeg исчез между проверкой и вызовом
+            raise SourceFailedError(
+                self.name,
+                "не удалось запустить склейку звука",
+                fix="Положите ffmpeg.exe рядом с приложением",
+                state=SourceState.PARTIAL,
+            )
+        return Stream(
+            source=self.name,
+            title=(str(info.get("title") or "").strip() or "YouTube") + " (склейка)",
+            # Один плейлист: его пишет ffmpeg, звук уже внутри.
+            kind=StreamKind.HLS,
+            qualities=(best,),
+            duration_s=0 if is_live else int(info.get("duration") or 0),
+            is_live=is_live,
+            state=SourceState.PARTIAL,
         )
 
 

@@ -16,6 +16,8 @@ venv/
 htmlcov/
 
 # Рабочие данные программы (не часть исходников)
+# Кеш: склеенные ffmpeg потоки и журнал. Сотни мегабайт.
+videos/cache/
 videos/*.mp4
 videos/*.mkv
 videos/*.webm

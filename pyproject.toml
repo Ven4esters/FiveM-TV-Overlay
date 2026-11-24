@@ -137,6 +137,7 @@ exclude = '(^|/)\.venv/'
 addopts = "-q --strict-markers"
 markers = [
     "network: тест ходит в интернет (по умолчанию запускается отдельно)",
+    "browser: тест поднимает Chromium и проверяет реальное воспроизведение",
 ]
 filterwarnings = ["error::DeprecationWarning"]
 

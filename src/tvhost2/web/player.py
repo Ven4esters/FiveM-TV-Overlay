@@ -64,6 +64,9 @@ SCRIPT = """
 (function () {
   var SID = __SID__;
   var BASE = __BASE__;
+  // Прямой эфир: у live нет длительности, перемотка бессмысленна, а hls.js
+  // должен держаться края плейлиста, иначе отставание растёт на глазах.
+  var LIVE = __LIVE__;
   var v = document.getElementById("v");
   var bigplay = document.getElementById("bigplay");
   var toastEl = document.getElementById("toast");
@@ -179,7 +182,11 @@ SCRIPT = """
         // capLevelToPlayerSize: не тянуть 1080p в окошко 640 пикселей.
         capLevelToPlayerSize: true,
         enableWorker: true,
-        lowLatencyMode: false
+        lowLatencyMode: false,
+        // У эфира — держимся живого края: 3 сегмента отставания, а не
+        // «догнать любой ценой» (рывками картинка хуже, чем отставание).
+        liveDurationInfinity: LIVE,
+        maxLiveSyncPlaybackRate: LIVE ? 1.5 : 1
       });
       hls.loadSource(src);
       hls.attachMedia(v);
@@ -218,9 +225,13 @@ SCRIPT = """
       case "play":       startPlayback(); break;
       case "pause":      v.pause(); break;
       case "toggle":     if (v.paused) { startPlayback(); } else { v.pause(); } break;
-      case "seek":       v.currentTime = Number(val) || 0; break;
+      case "seek":
+        if (LIVE) { toast("В прямом эфире перемотки нет"); break; }
+        v.currentTime = Number(val) || 0;
+        break;
       case "seekRel":
-        var d = v.duration || 1e9;
+        if (LIVE) { toast("В прямом эфире перемотки нет"); break; }
+        var d = Number.isFinite(v.duration) ? v.duration : 1e9;
         v.currentTime = Math.max(0, Math.min(d, v.currentTime + (Number(val) || 0)));
         break;
       case "volume":     v.volume = Math.max(0, Math.min(1, Number(val))); v.muted = false; break;
@@ -280,7 +291,7 @@ SCRIPT = """
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         currentTime: v.currentTime || 0,
-        duration: v.duration || 0,
+        duration: LIVE ? 0 : (v.duration || 0),
         paused: !!v.paused,
         volume: v.volume,
         muted: v.muted,
@@ -327,7 +338,11 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
     всё остальное, поэтому игре не нужно знать ничего, кроме этого адреса.
     """
     title = html.escape(session.title or "Видео")
-    script = SCRIPT.replace("__SID__", _js(session.sid)).replace("__BASE__", _js(base))
+    script = (
+        SCRIPT.replace("__SID__", _js(session.sid))
+        .replace("__BASE__", _js(base))
+        .replace("__LIVE__", "true" if session.stream and session.stream.is_live else "false")
+    )
     styles = BASE_CSS.replace("</", "<\\/")  # безопасность: не закрыть тег внутри
     return f"""<!doctype html>
 <html lang="ru">

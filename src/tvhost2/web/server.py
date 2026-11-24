@@ -396,6 +396,9 @@ class OverlayHandler(BaseHTTPRequestHandler):
             return self._error_playlist("нужен параметр url", 400)
         headers = _referer_headers(target)
         try:
+            # file:// — склейка ffmpeg (видео+звук): отдаём плейлист и сегменты
+            # с диска тем же путём, что и сетевые. Отдельной ветки не нужно:
+            # fetch умеет и локальные файлы, а rewrite — абсолютные пути.
             response = fetch(target, headers, max_bytes=8 * 1024 * 1024)
         except FetchError as exc:
             return self._error_playlist(exc.reason, exc.status)

@@ -7,9 +7,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
-from tvhost2.core import SourceState, StreamKind, registry
+from tvhost2.core import StreamKind, registry
 from tvhost2.sources import YouTubeSource, register_all
 from tvhost2.sources.youtube import is_live_link, video_id
 
@@ -74,6 +76,18 @@ def audio_hls(itag: str = "233") -> dict:
         "acodec": None,
         "ext": "mp4",
         "url": f"https://manifest.googlevideo.com/itag/{itag}/index.m3u8",
+    }
+
+
+def direct_audio_file(itag: str = "140") -> dict:
+    """Прямой аудиофайл — как отдаёт YouTube, когда HLS-аудио нет."""
+    return {
+        "format_id": itag,
+        "protocol": "https",
+        "vcodec": "none",
+        "acodec": "mp4a.40.2",
+        "ext": "m4a",
+        "url": f"https://rr1.googlevideo.com/videoplayback/itag{itag}.m4a",
     }
 
 
@@ -196,20 +210,34 @@ class TestResolve:
         assert len(stream.qualities) == 6
         assert stream.qualities[0].label == "1080p"
 
-    def test_live_is_refused_politely(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Живой эфир пока не поддерживаем — говорим прямо, а не «ошибка»."""
-        from tvhost2.core import SourceFailedError
+    def test_live_stream_is_supported(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Прямой эфир разбирается, но помечен как live и без длительности.
 
+        Раньше такие ссылки отклонялись. Теперь отдаются: плеер знает про
+        эфир из флага и не рисует таймер с перемоткой. Длительность у live
+        принудительно 0 — иначе пульт считал бы проценты от начала трансляции
+        и показывал «смотрю 4 часа».
+        """
         monkeypatch.setattr(
             "tvhost2.sources.youtube.extract_info",
-            fake_info({"title": "LIVE", "is_live": True, "formats": h264_formats()}),
+            fake_info(
+                {
+                    "title": "LIVE",
+                    "is_live": True,
+                    "duration": 7200,
+                    "formats": [*h264_formats(), audio_hls("233")],
+                }
+            ),
         )
-        with pytest.raises(SourceFailedError) as info:
-            YouTubeSource().resolve("https://www.youtube.com/watch?v=xbeH0wcBwjw")
-        assert "прямой эфир" in info.value.why.lower()
-        assert info.value.state is SourceState.PARTIAL
+        stream = YouTubeSource().resolve("https://www.youtube.com/live/xbeH0wcBwjw")
+        assert stream.is_live is True
+        assert stream.duration_s == 0
+        assert stream.qualities, "у эфира тоже должны быть качества"
+        # Заголовок берём от видео («LIVE»), а не навязываем свой.
+        assert stream.title == "LIVE"
 
     def test_no_audio_is_explicit_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Нет ни HLS-аудио, ни файла — говорим об этом прямо."""
         from tvhost2.core import SourceFailedError
 
         monkeypatch.setattr(
@@ -219,6 +247,35 @@ class TestResolve:
         with pytest.raises(SourceFailedError) as info:
             YouTubeSource().resolve("https://www.youtube.com/watch?v=x")
         assert "аудио" in info.value.why.lower()
+
+    def test_direct_audio_goes_to_mux(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Есть прямой аудиофайл и ffmpeg — уходим в склейку, а не в отказ."""
+        from tvhost2.core import mux
+
+        monkeypatch.setattr(
+            "tvhost2.sources.youtube.extract_info",
+            fake_info(
+                {
+                    "title": "Только файл",
+                    "duration": 300,
+                    "formats": [*h264_formats(), direct_audio_file("140")],
+                }
+            ),
+        )
+        called: dict[str, object] = {}
+
+        def fake_mux(video_url: str, audio_url: str):  # noqa: ANN202
+            called["video"] = video_url
+            called["audio"] = audio_url
+            return mux.Muxed(playlist=Path("/nonexistent/index.m3u8"))
+
+        monkeypatch.setattr(mux, "available", lambda: True)
+        monkeypatch.setattr(mux, "muxed_for", fake_mux)
+
+        stream = YouTubeSource().resolve("https://www.youtube.com/watch?v=x")
+        assert called["audio"] == "https://rr1.googlevideo.com/videoplayback/itag140.m4a"
+        assert "склейка" in stream.title
+        assert len(stream.qualities) == 1, "при склейке качество одно"
 
     def test_only_vp9_is_explicit_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from tvhost2.core import SourceFailedError
