@@ -13,7 +13,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from tests.qt_support import qt_widgets
+from conftest import qt_widgets
 
 QApplication = qt_widgets()
 

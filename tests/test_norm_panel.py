@@ -21,7 +21,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # роняет ВСЮ сессию на сборе тестов, а не пропускает один модуль.
 # Именно так CI и краснел: «Interrupted: 1 error during collection» за две
 # секунды, без единого запущенного теста.
-from tests.qt_support import qt_widgets  # noqa: E402
+from conftest import qt_widgets  # noqa: E402
 
 QApplication = qt_widgets()
 
