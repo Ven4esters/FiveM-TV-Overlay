@@ -373,6 +373,30 @@ def quality_urls(source: dict[str, Any]) -> dict[int, str]:
     return result
 
 
+def form_payload(embed: str, player_html: str) -> dict[str, Any]:
+    """Тело запроса, как его собирает плеер.
+
+    Из расшифровки `iT` (live @667002):
+
+        hf = {'token': userParam.token, 'av1': config.av1Support,
+              'autoplay': userParam.autoPlayChange}
+
+    и дальше `userParam['refToken'] && (hf['_ref'] = userParam['refToken'])`.
+
+    `_ref` — подпись сайта-источника. Раньше мы отправляли его пустым,
+    теперь берём из страницы плеера, если сервер её положил.
+    """
+    payload: dict[str, Any] = {
+        "token": _site_token(embed),
+        "av1": 0,
+        "autoplay": 0,
+    }
+    ref = ref_token_of(player_html)
+    if ref:
+        payload["_ref"] = ref
+    return payload
+
+
 def attempts(embed: str, player_html: str) -> list[dict[str, Any]]:
     """Все попытки запроса адресов — чтобы было видно, что и чем ответило.
 
@@ -390,17 +414,10 @@ def attempts(embed: str, player_html: str) -> list[dict[str, Any]]:
         headers = {"Borth": borth, "Referer": embed, "Origin": _origin_of(embed)}
         # Сначала форма: так делает jQuery в самом плеере. JSON — вторым
         # шагом, на случай если сервер принимает только его.
-        status, body = _post_form(
-            url,
-            {"token": _site_token(embed), "av1": 0, "autoplay": 0},
-            headers,
-        )
+        payload = form_payload(embed, player_html)
+        status, body = _post_form(url, payload, headers)
         if status == HTTP_OK and not sources_of(body):
-            status, body = _post_json(
-                url,
-                {"token": _site_token(embed), "av1": 0, "autoplay": 0},
-                headers,
-            )
+            status, body = _post_json(url, payload, headers)
         result.append({"id": ident, "url": url, "status": status, "body": body})
         if status == HTTP_OK and sources_of(body):
             break

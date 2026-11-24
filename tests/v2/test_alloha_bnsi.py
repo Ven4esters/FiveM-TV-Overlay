@@ -607,3 +607,39 @@ class TestRefToken:
         monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
         values = alloha_bnsi._ref_values("")
         assert any(v.startswith("s1.1795_abc") for v in values)
+
+
+class TestFormPayload:
+    """Тело запроса — ровно как у плеера: token, av1, autoplay (+_ref если есть)."""
+
+    EMBED = "https://x.live/?token_movie=dc27&token=5286c49a9d29cad731353b68d3f1f5"
+
+    def test_without_ref(self) -> None:
+        payload = alloha_bnsi.form_payload(self.EMBED, "userParam = { refToken: '' }")
+        assert payload == {
+            "token": "5286c49a9d29cad731353b68d3f1f5",
+            "av1": 0,
+            "autoplay": 0,
+        }
+
+    def test_with_ref(self) -> None:
+        page = "userParam = { refToken: 's1.1795638751_abc.def' }"
+        payload = alloha_bnsi.form_payload(self.EMBED, page)
+        assert payload["_ref"] == "s1.1795638751_abc.def"
+        assert list(payload) == ["token", "av1", "autoplay", "_ref"], "порядок как у плеера"
+
+    def test_attempts_send_ref(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sent: list[dict] = []
+
+        def fake(url: str, payload: dict, headers: dict) -> tuple[int, str]:
+            sent.append(dict(payload))
+            return 404, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
+        page = (
+            'const fileList = JSON.parse(\'{"type":"serial","active":{"id":111,'
+            '"id_file":null},"all":{"1":{"1":{"t96":{"id":111,"id_file":null}}}}}\');\n'
+            "userParam = { refToken: 's1.1795638751_abc.def' }"
+        )
+        alloha_bnsi.attempts(self.EMBED, page)
+        assert sent and all(item.get("_ref") == "s1.1795638751_abc.def" for item in sent)
