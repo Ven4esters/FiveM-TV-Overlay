@@ -99,29 +99,69 @@ def geo_message(item: dict) -> str:
     return " ".join(text.split())
 
 
-def qualities_from_master(master: str) -> list[Quality]:
-    """Разобрать мастер-плейлист в качества.
+_STREAM_INF_RE = re.compile(r"#EXT-X-STREAM-INF:(?P<attrs>[^\n]*)\n(?P<url>[^\s#][^\n]*)")
+"""Вариант качества: строка атрибутов и адрес на следующей строке."""
 
-    tvigle пишет номиналы ширины (`RESOLUTION=1280x720` или `1280`). Берём
-    высоту из `x`, а если её нет — считаем по ширине от 16:9.
+_RESOLUTION_RE = re.compile(r"RESOLUTION=(?P<w>\d+)x(?P<h>\d+)")
+"""Готовая высота кадра. Есть не всегда."""
+
+_BANDWIDTH_RE = re.compile(r"(?:AVERAGE-)?BANDWIDTH=(?P<value>\d+)")
+"""Битрейт. Есть почти всегда — по нему и оцениваем качество, если высоты нет."""
+
+BANDWIDTH_TO_HEIGHT = (
+    (6_000_000, 1080),
+    (2_200_000, 720),
+    (1_200_000, 480),
+    (0, 360),
+)
+"""Битрейт → примерная высота кадра.
+
+Зачем: у части релизов tvigle в мастере нет `RESOLUTION`, только
+`BANDWIDTH`. Первая версия разбора требовала `RESOLUTION` и возвращала
+НОЛЬ качеств — мост отвечал 502 «у потока нет качеств», и человек видел
+«ошибка потока» на исправном видео. Оценка по битрейту грубая, но лучше
+пустого списка: переключение качества всё равно делает сам плеер.
+"""
+
+
+def _height_from_bitrate(bits: int) -> int:
+    """Оценить высоту кадра по битрейту."""
+    for threshold, height in BANDWIDTH_TO_HEIGHT:
+        if bits >= threshold:
+            return height
+    return 360
+
+
+def qualities_from_master(master: str) -> list[Quality]:
+    """Разобрать мастер-плейлист tvigle в качества.
+
+    Высоту берём из `RESOLUTION`, если она есть; иначе оцениваем по
+    битрейту. Пропускаем только то, что совсем не похоже на качество
+    (ни высоты, ни битрейта).
     """
     qualities: list[Quality] = []
-    for match in re.finditer(
-        r"#EXT-X-STREAM-INF:[^\n]*?(?:RESOLUTION=(?P<w>\d+)x(?P<h>\d+)|[:,](?P<nom>\d{3,4}))[^\n]*\n(?P<url>\S+)",
-        master,
-    ):
-        if match.group("h"):
-            height = int(match.group("h"))
-            width = int(match.group("w"))
+    for match in _STREAM_INF_RE.finditer(master or ""):
+        attrs = match.group("attrs")
+        url = match.group("url").strip()
+        if not url or url.startswith("#"):
+            continue
+        size = _RESOLUTION_RE.search(attrs)
+        band = _BANDWIDTH_RE.search(attrs)
+        bits = int(band.group("value")) if band else 0
+        if size:
+            width = int(size.group("w"))
+            height = int(size.group("h"))
+        elif bits:
+            height = _height_from_bitrate(bits)
+            width = round(height * 16 / 9)
         else:
-            width = int(match.group("nom"))
-            height = round(width * 9 / 16)
+            continue
         if height < MIN_HEIGHT:
             continue
-        bitrate = max(1, round(width * height * 25 / 10_000))
-        qualities.append(
-            Quality(height=height, width=width, bitrate_kbps=bitrate, url=match.group("url"))
+        bitrate = (
+            max(1, round(bits / 1000)) if bits else max(1, round(width * height * 25 / 10_000))
         )
+        qualities.append(Quality(height=height, width=width, bitrate_kbps=bitrate, url=url))
     qualities.sort(key=lambda q: q.height, reverse=True)
     return qualities
 

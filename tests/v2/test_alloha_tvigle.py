@@ -285,6 +285,28 @@ class TestTvigle:
     def test_master_without_link(self):
         assert tvigle.qualities_from_master("#EXTM3U\n") == []
 
+    def test_master_without_resolution(self):
+        """Мастер без `RESOLUTION` — это не «нет качеств».
+
+        Живой баг 24.11.2026: заказчик получил 502 на исправном видео. Разбор
+        требовал `RESOLUTION` и возвращал НОЛЬ качеств, а мост на пустом
+        списке отвечает 502 «у потока нет качеств». Теперь высота оценивается
+        по битрейту — грубо, но играть можно.
+        """
+        master = (
+            "#EXTM3U\n"
+            "#EXT-X-STREAM-INF:BANDWIDTH=5000000\nhttps://c/1.m3u8\n"
+            "#EXT-X-STREAM-INF:BANDWIDTH=2000000\nhttps://c/2.m3u8\n"
+        )
+        qualities = tvigle.qualities_from_master(master)
+        assert [q.height for q in qualities] == [720, 480]
+        assert all(q.bitrate_kbps > 0 for q in qualities)
+
+    def test_bitrate_estimate(self):
+        assert tvigle._height_from_bitrate(8_000_000) == 1080
+        assert tvigle._height_from_bitrate(2_500_000) == 720
+        assert tvigle._height_from_bitrate(500_000) == 360
+
 
 # ------------------------------------------------------- отказ человеку
 
