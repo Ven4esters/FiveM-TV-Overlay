@@ -66,7 +66,7 @@ class YouTubeSource(YtDlpSource):
         "youtube-nocookie.com",
     )
     state = SourceState.OK
-    note = "до 1080p (H.264), без входа"
+    note = "до 1080p (H.264), видео и эфиры, без входа"
     kind = StreamKind.HLS
 
     def extractor_opts(self) -> dict[str, Any]:
