@@ -178,3 +178,79 @@ def test_serve_mode_stops_server_on_exit() -> None:
     again.server.shutdown()
     again.worker.join(timeout=5)
     again.server.server_close()
+
+
+def test_mute_button_toggles(app: object) -> None:
+    """«Звук» переключает, а не только выключает.
+
+    Жалоба заказчика: «кнопка Звук убирает его, но не может включить
+    обратно». Причина была в одной строке: `clicked` был подключён к
+    `_cmd("mute", True)` — то есть КАЖДОЕ нажатие отправляло «выключи».
+    Теперь состояние помнит сама кнопка, а тест следит, чтобы не вернулось.
+    """
+    from tvhost2.ui.panel import Panel
+
+    panel = Panel()
+    panel.sid = "test"
+    sent: list[tuple[str, object]] = []
+    panel._cmd = lambda cmd, value=None: sent.append((cmd, value))  # type: ignore[method-assign]
+
+    panel._toggle_mute()
+    panel._toggle_mute()
+    panel._toggle_mute()
+
+    assert sent == [("mute", True), ("mute", False), ("mute", True)]
+    assert panel._muted is True
+
+
+def test_fullscreen_button_toggles(app: object) -> None:
+    """«Развернуть» тоже переключает, а не только разворачивает."""
+    from tvhost2.ui.panel import Panel
+
+    panel = Panel()
+    panel.sid = "test"
+    sent: list[tuple[str, object]] = []
+    panel._cmd = lambda cmd, value=None: sent.append((cmd, value))  # type: ignore[method-assign]
+
+    panel._toggle_fullscreen()
+    panel._toggle_fullscreen()
+
+    assert sent == [("fullscreen", True), ("fullscreen", False)]
+
+
+def test_subtitles_without_tracks_explains(app: object) -> None:
+    """Нет дорожек — не молчим, а говорим где искать."""
+    from tvhost2.ui.panel import Panel
+
+    panel = Panel()
+    panel._subtitle_titles = []
+    panel._cycle_subtitles()
+    text = panel.remote_status.text()
+    assert "нет дорожек" in text.lower()
+
+
+def test_norm_shows_reason_not_no_data(app: object) -> None:
+    """Вместо «нет данных» — причина из ответа сервера."""
+    from tvhost2.ui.panel import Panel
+
+    panel = Panel()
+    panel.sid = "test"
+    # Сервер объясняет причину в `note` — её и надо показать человеку.
+    panel.loudness_arrived.emit("ffmpeg не найден — замер невозможен")
+    assert "ffmpeg" in panel.norm_value.text()
+    assert "нет данных" not in panel.norm_value.text().lower()
+
+
+def test_window_size_is_bounded(app: object) -> None:
+    """Окно не «прыгает»: есть стартовый размер и потолок высоты.
+
+    Жалоба: «размеры то и дело меняются, становясь шире или растягиваясь
+    по высоте». Причина — список недавних фиксировал высоту по числу
+    записей, а подсказка об ошибке просила высоту под текст, и окно
+    подстраивалось под содержимое.
+    """
+    from tvhost2.ui.panel import Panel
+
+    panel = Panel()
+    assert panel.minimumWidth() >= 500
+    assert panel.maximumHeight() <= 1000

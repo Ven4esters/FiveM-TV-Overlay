@@ -348,3 +348,132 @@ class TestLiveStream:
         with urllib.request.urlopen(req, timeout=25) as resp:
             body = resp.read(500).decode("utf-8", "replace")
         assert body.startswith("#EXTM3U"), "ответ не является HLS-плейлистом"
+
+
+# Настоящая разметка сериала с kodikplayer.com — снята 25.11.2026 со ссылки
+# https://kodikplayer.com/serial/35906/10ea0c4687d90c530d45d68ac3b64b05/720p
+# (сайт dorama-land.top). Жалоба заказчика: «играет не первая серия, а перевод
+# слетает на Solomon». Оба симптома — из-за этой разметки, см. тесты ниже.
+SERIAL_HTML = """
+<div class="serial-panel">
+  <div class="serial-seasons-box">
+    <select>
+      <option value="1" data-serial-id="35906"
+              data-serial-hash="10ea0c4687d90c530d45d68ac3b64b05"
+              data-title="1 сезон" selected="selected">1 сезон</option>
+    </select>
+  </div>
+  <div class="serial-series-box">
+    <select>
+      <option value="1" data-id="855794"
+              data-hash="68cfae61e69ba2a3005fa117ae580cbd"
+              data-title="1 серия">1 серия</option>
+      <option value="2" data-id="857743"
+              data-hash="73b38355cfd000d2d7fb7686ca6f4101"
+              data-title="2 серия">2 серия</option>
+      <option value="8" data-id="872800"
+              data-hash="711772b599c53a80e12fc884b7cf3f71"
+              data-title="8 серия">8 серия</option>
+    </select>
+  </div>
+  <div class="serial-translations-box">
+    <select>
+      <option value="963" data-id="963" data-translation-type="voice"
+              data-media-id="35906" data-media-hash="10ea0c4687d90c530d45d68ac3b64b05"
+              data-media-type="serial" data-title="Amazing Dubbing"
+              data-episode-count="8" selected="selected">Amazing Dubbing (8 эп.)</option>
+      <option value="1544" data-id="1544" data-translation-type="subtitles"
+              data-media-id="30415" data-media-hash="36d2900bee2ac1beadb5c336529ab6d2"
+              data-media-type="serial" data-title="FSG Solomon.Subtitles"
+              data-episode-count="8">FSG Solomon.Subtitles (8 эп.)</option>
+    </select>
+  </div>
+</div>
+"""
+
+SERIAL_URL = "https://kodikplayer.com/serial/35906/10ea0c4687d90c530d45d68ac3b64b05/720p"
+
+
+class TestEpisodes:
+    """Серии сериала: в адресе их НЕТ, они лежат только в разметке плеера.
+
+    Почему это был баг: `id` и `hash` в адресе принадлежат СЕЗОНУ, и Kodik
+    сам выбирает, какую серию включить — по подписи `vInfo`. У проверенного
+    сериала `vInfo.id` = 872800, то есть ВОСЬМАЯ серия из восьми. Отсюда и
+    «воспроизводится не первая», и «перевод слетает»: vInfo указывает ещё и
+    на третью озвучку.
+    """
+
+    def test_parsed(self) -> None:
+        from tvhost2.sources.kodik import parse_episodes
+
+        episodes = parse_episodes(SERIAL_HTML)
+        assert [e["episode"] for e in episodes] == ["1", "2", "8"]
+        assert episodes[0]["id"] == "855794"
+        assert episodes[0]["hash"] == "68cfae61e69ba2a3005fa117ae580cbd"
+        assert episodes[0]["season"] == "1"
+
+    def test_pick_by_number(self) -> None:
+        from tvhost2.sources.kodik import parse_episodes, parse_player_url, pick_episode
+
+        ref = parse_player_url(SERIAL_URL + "?episode=2")
+        assert ref is not None
+        ident, media_hash = pick_episode(parse_episodes(SERIAL_HTML), ref)
+        assert ident == "857743" and media_hash.startswith("73b38355")
+
+    def test_without_number_takes_first_not_last(self) -> None:
+        """Ссылка без номера — первая серия, а не та, что выберет Kodik."""
+        from tvhost2.sources.kodik import parse_episodes, parse_player_url, pick_episode
+
+        ref = parse_player_url(SERIAL_URL)
+        assert ref is not None
+        ident, _ = pick_episode(parse_episodes(SERIAL_HTML), ref)
+        assert ident == "855794", "не 872800: это восьмая серия из vInfo"
+
+    def test_link_already_pointing_to_episode(self) -> None:
+        """Ссылка уже на серию — ничего не подменяем."""
+        from tvhost2.sources.kodik import parse_episodes, parse_player_url, pick_episode
+
+        ref = parse_player_url(
+            "https://kodikplayer.com/serial/855794/68cfae61e69ba2a3005fa117ae580cbd/720p"
+        )
+        assert ref is not None
+        assert pick_episode(parse_episodes(SERIAL_HTML), ref) == ("", "")
+
+    def test_no_episodes(self) -> None:
+        from tvhost2.sources.kodik import parse_episodes
+
+        assert parse_episodes("<html><body>фильм</body></html>") == []
+
+
+class TestEpisodeUrl:
+    def test_adds_parameter(self) -> None:
+        from tvhost2.sources.kodik import url_with_episode
+
+        assert url_with_episode(SERIAL_URL, 3) == SERIAL_URL + "?episode=3"
+
+    def test_replaces_existing(self) -> None:
+        from tvhost2.sources.kodik import url_with_episode
+
+        once = url_with_episode(SERIAL_URL, 3)
+        assert url_with_episode(once, 7).endswith("?episode=7")
+        assert url_with_episode(once, 7).count("episode=") == 1
+
+    def test_zero_removes(self) -> None:
+        from tvhost2.sources.kodik import url_with_episode
+
+        assert url_with_episode(SERIAL_URL + "?episode=5", 0) == SERIAL_URL
+
+
+class TestTranslationKinds:
+    def test_subtitles_are_marked(self) -> None:
+        """У Kodik «субтитры» — это озвучка с типом subtitles, а не <track>."""
+        from tvhost2.sources.kodik import translation_episodes
+
+        tracks = translation_episodes(SERIAL_HTML)
+        assert [t["title"] for t in tracks] == [
+            "Amazing Dubbing",
+            "FSG Solomon.Subtitles",
+        ]
+        assert [t["translation_type"] for t in tracks] == ["voice", "subtitles"]
+        assert tracks[0]["selected"] is True

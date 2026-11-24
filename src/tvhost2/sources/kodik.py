@@ -34,6 +34,7 @@ import base64
 import json
 import logging
 import re
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
@@ -121,28 +122,50 @@ _PLAYER_RE = re.compile(
 
 @dataclass(frozen=True)
 class KodikRef:
-    """Что вытащили из ссылки на плеер."""
+    """Что вытащили из ссылки на плеер.
+
+    `episode` — какая серия нужна, НОМЕР (1, 2, 3…), а не id.
+    `0` — «как решит плеер»: для фильмов и для ссылок, где серии нет.
+
+    Почему номер, а не id: у Kodik id серии берётся только со страницы
+    плеера (`serial-series-box`), а в адресе лежит id СЕЗОНА. Хранить в
+    ссылке номер удобнее: `?episode=3` читается человеком и переживает
+    смену id на стороне Kodik.
+    """
 
     kind: str  # "seria" | "video"
     video_id: str
     hash: str
     quality: str  # "720p" — заявленное качество; на поток не влияет
     host: str  # домен зеркала
+    episode: int = 0
+
+
+_EPISODE_RE = re.compile(r"[?&#]episode=(\d{1,4})", re.I)
+"""Номер серии в адресе. Наш собственный параметр: Kodik его игнорирует,
+мы читаем сами — в адресе плеера серии нет вообще."""
 
 
 def parse_player_url(url: str) -> KodikRef | None:
-    """Разобрать ссылку вида `/seria/1420137/<hash>/720p`."""
+    """Разобрать ссылку вида `/seria/1420137/<hash>/720p?episode=3`.
+
+    Без `episode` сериал откроется на той серии, которую выберет сам Kodik
+    (по своей подписи `vInfo`), и это НЕ обязательно первая — проверено
+    живьём 25.11.2026.
+    """
     match = _PLAYER_RE.search(url or "")
     if not match:
         return None
     host_match = re.search(r"(kodik[a-z0-9\-]*\.(?:com|info|biz|cc|bz))", url, re.I)
     quality_match = re.search(r"/(\d{3,4})p(?:/|$)", url or "")
+    episode_match = _EPISODE_RE.search(url or "")
     return KodikRef(
         kind=match.group("type").lower(),
         video_id=match.group("id"),
         hash=match.group("hash"),
         quality=f"{quality_match.group(1)}p" if quality_match else "720p",
         host=host_match.group(1).lower() if host_match else "kodikplayer.com",
+        episode=int(episode_match.group(1)) if episode_match else 0,
     )
 
 
@@ -216,10 +239,16 @@ def page_vinfo(html: str) -> dict[str, str]:
     return found
 
 
-def fetch_links(ref: KodikRef) -> dict[str, list[dict[str, Any]]]:
+def fetch_links(ref: KodikRef, *, use_vinfo: bool = True) -> dict[str, list[dict[str, Any]]]:
     """Запросить /ftor и получить ссылки на все качества.
 
     Возвращает `{"720": [{"src": "<url>"}], "480": [...]}` — уже расшифрованные.
+
+    `use_vinfo=False` — НЕ подменять переданные id/hash значениями `vInfo`.
+    Нужно для серий: `vInfo` указывает на то, что плеер выбрал сам (у
+    проверенного сериала — третью озвучку и не первую серию), и подмена
+    молча отменяла нашу. Для фильмов и для ссылок «на сезон» подмена
+    остаётся: там она как раз и спасает от 404.
     """
     player_url = f"https://{ref.host}/{ref.kind}/{ref.video_id}/{ref.hash}/720p"
     html = _http(player_url)
@@ -249,7 +278,8 @@ def fetch_links(ref: KodikRef) -> dict[str, list[dict[str, Any]]]:
         "info": "{}",
     }
     # Сериалы: истинные type/hash/id лежат в vInfo, а не в адресе.
-    real = page_vinfo(html)
+    # Но только когда мы сами их не выбрали (см. `use_vinfo`).
+    real = page_vinfo(html) if use_vinfo else {}
     if real.get("hash") and real.get("id") and real.get("type"):
         payload["type"] = real["type"]
         payload["hash"] = real["hash"]
@@ -358,6 +388,168 @@ def parse_translations(html: str) -> list[dict[str, Any]]:
 
 
 # ----------------------------------------------------------------------
+# серии и сезоны
+# ----------------------------------------------------------------------
+
+_SERIAL_BLOCK_RE = re.compile(r'<div class="serial-panel.*?</div>\s*</div>', re.S)
+"""Блок с селектами сезона, серии и озвучки — единственное место, где они есть."""
+
+_BOX_RE = {
+    "seasons": re.compile(r'<div class="serial-seasons-box".*?</select>', re.S),
+    "episodes": re.compile(r'<div class="serial-series-box".*?</select>', re.S),
+    "translations": re.compile(r'<div class="serial-translations-box".*?</select>', re.S),
+}
+"""Три выпадающих списка плеера. Ищем по классу обёртки, а не по порядку:
+порядок в разных версиях плеера разный."""
+
+_OPTION_RE = re.compile(r"<option\b(?P<attrs>[^>]*)>(?P<text>[^<]*)</option>", re.S | re.I)
+_ATTR_RE = re.compile(r'([a-zA-Z\-]+)\s*=\s*"([^"]*)"')
+
+
+def _options(html: str, box: str) -> list[dict[str, str]]:
+    """Все `<option>` из указанного списка плеера, с атрибутами."""
+    found = _BOX_RE[box].search(html or "")
+    if not found:
+        return []
+    items: list[dict[str, str]] = []
+    for match in _OPTION_RE.finditer(found.group(0)):
+        attrs = {k.lower(): v for k, v in _ATTR_RE.findall(match.group("attrs"))}
+        attrs["text"] = (match.group("text") or "").strip()
+        items.append(attrs)
+    return items
+
+
+def pick_episode(episodes: list[dict[str, Any]], ref: KodikRef) -> tuple[str, str]:
+    """id и hash нужной серии. Пустая пара — оставить как в адресе.
+
+    В адресе `id` и `hash` принадлежат СЕЗОНУ, а не серии, и Kodik сам
+    выбирает, что включить — по своей подписи `vInfo`. Проверено живьём
+    25.11.2026 на `/serial/35906/10ea0c…/720p`: `vInfo.id` = 872800, а это
+    ВОСЬМАЯ серия из восьми. Отсюда жалоба «воспроизводится не первая».
+
+    Если же ссылка уже ведёт на серию (её id есть в списке — так бывает
+    у адресов, скопированных из самого плеера), ничего не подменяем.
+    """
+    if not episodes:
+        return "", ""
+    if any(str(e.get("id")) == ref.video_id for e in episodes):
+        return "", ""
+    wanted = ref.episode or 1
+    picked = next(
+        (e for e in episodes if str(e.get("episode")) == str(wanted)),
+        episodes[0],
+    )
+    return str(picked.get("id") or ""), str(picked.get("hash") or "")
+
+
+def parse_episodes(html: str) -> list[dict[str, Any]]:
+    """Серии сериала: `[{season, episode, title, id, hash}, …]`.
+
+    Зачем это вообще нужно — выяснено живьём 25.11.2026 на ссылке
+    `/serial/35906/10ea0c…/720p` с dorama-land.top. Там `id` и `hash` в
+    АДРЕСЕ принадлежат не серии, а сезону:
+
+        адрес:     /serial/35906/10ea0c4687d90c530d45d68ac3b64b05/720p
+        сезон:     value=1  data-serial-id=35906  data-serial-hash=10ea0c…
+        1 серия:   value=1  data-id=855794  data-hash=68cfae61…
+
+    То есть запрос по адресу отдаёт «сериал целиком», и Kodik сам решает,
+    что включить — а решает он по своей подписи `vInfo` (872800/711772…),
+    и это вообще третья озвучка. Отсюда и «играет не та серия», и «перевод
+    слетает на другой». Поэтому серию надо брать из `serial-series-box`
+    явно, а не полагаться на адрес.
+
+    Сезон у Kodik в URL не участвует: серии всех сезонов лежат в одном
+    списке, а номер сезона — только подпись. Поэтому `season` берём из
+    выбранного сезона, чтобы показать человеку «1 сезон · 3 серия».
+    """
+    markup = html or ""
+    season_text = "1"
+    seasons = _options(markup, "seasons")
+    for item in seasons:
+        if "selected" in item:
+            season_text = item.get("value", "1") or "1"
+            break
+    else:
+        if seasons:
+            season_text = seasons[0].get("value", "1") or "1"
+
+    episodes: list[dict[str, Any]] = []
+    for item in _options(markup, "episodes"):
+        number = item.get("value", "")
+        ident = item.get("data-id", "")
+        media_hash = item.get("data-hash", "")
+        if not ident or not media_hash:
+            continue
+        episodes.append(
+            {
+                "season": season_text,
+                "episode": number,
+                "title": item.get("data-title") or item.get("text") or f"{number} серия",
+                "id": ident,
+                "hash": media_hash,
+            }
+        )
+    return episodes
+
+
+def translation_episodes(html: str) -> list[dict[str, Any]]:
+    """Озвучки с их `id`/`hash` — для переключения перевода у сериала."""
+    tracks: list[dict[str, Any]] = []
+    for item in _options(html or "", "translations"):
+        media_hash = item.get("data-media-hash", "")
+        if not media_hash:
+            continue
+        tracks.append(
+            {
+                "id": item.get("data-id", item.get("value", "")),
+                "title": item.get("data-title") or item.get("text") or "",
+                "hash": media_hash,
+                "type": item.get("data-media-type", "serial"),
+                "media_id": item.get("data-media-id", ""),
+                "translation_type": item.get("data-translation-type", ""),
+                "episode_count": item.get("data-episode-count", ""),
+                "selected": "selected" in item,
+            }
+        )
+    return tracks
+
+
+def all_urls(url: str, html: str) -> list[str]:
+    """Адреса всех серий, какие плеер показал в списке.
+
+    Нужны приложению, чтобы предложить «следующая серия», а не заставлять
+    человека искать ссылку заново.
+    """
+    ref = parse_player_url(url)
+    if ref is None:
+        return []
+    return [
+        f"https://{ref.host}/serial/{ep['id']}/{ep['hash']}/{ref.quality}"
+        for ep in parse_episodes(html)
+    ]
+
+
+def url_with_episode(url: str, number: int) -> str:
+    """Та же ссылка, но с номером серии в параметре `?episode=N`.
+
+    Зачем именно в адресе: сессия хранит ссылку, и по ней же история
+    просмотров узнаёт запись. Положив номер в адрес, мы получаем, что
+    «3 серия» — это отдельная запись, и вернуться к ней можно одним
+    нажатием. Kodik параметр игнорирует, читаем его только мы.
+    """
+    parts = urllib.parse.urlsplit(url or "")
+    if not parts.netloc:
+        return url
+    params = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    params = [(k, v) for k, v in params if k.lower() != "episode"]
+    if number > 0:
+        params.append(("episode", str(number)))
+    query = urllib.parse.urlencode(params)
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
+
+
+# ----------------------------------------------------------------------
 # источник для реестра
 # ----------------------------------------------------------------------
 
@@ -394,9 +586,13 @@ class KodikSource:
         html = _http(player_url)
         translations = parse_translations(html)
 
-        # Выбранная озвучка: у неё свой hash, и /ftor надо спрашивать по нему.
-        # Если индекс вне списка — берём ту, что плеер выбрал сам (selected),
-        # иначе первую.
+        episodes = parse_episodes(html)
+        episode_id, episode_hash = pick_episode(episodes, ref)
+        # ---- озвучка --------------------------------------------------
+        # Каждая озвучка — отдельный поток со своим hash. Номер берём из
+        # СВОЕГО списка (порядок тот же, что в `audio_tracks`), а не из
+        # `vInfo`: `vInfo` указывает на ту озвучку, что Kodik выбрал сам,
+        # и именно из-за неё «перевод слетал» после смены серии.
         chosen = ref
         if translations:
             index = translation_index if 0 <= translation_index < len(translations) else 0
@@ -409,8 +605,23 @@ class KodikSource:
                 hash=str(track.get("hash") or ref.hash),
                 quality=ref.quality,
                 host=ref.host,
+                episode=ref.episode,
             )
-        links = fetch_links(chosen)
+
+        # Серия главнее сезона: у Kodik серия — самостоятельный поток
+        # (`data-id`/`data-hash` из списка), и только она даёт нужную серию.
+        if episode_id and episode_hash:
+            payload_ref = KodikRef(
+                kind="seria",
+                video_id=episode_id,
+                hash=episode_hash,
+                quality=chosen.quality,
+                host=chosen.host,
+                episode=ref.episode,
+            )
+        else:
+            payload_ref = chosen
+        links = fetch_links(payload_ref, use_vinfo=not (episode_id and episode_hash))
 
         qualities: list[Quality] = []
         for height_text, items in links.items():
@@ -442,7 +653,32 @@ class KodikSource:
                 state=SourceState.PARTIAL,
             )
 
+        # Серии — для пульта: без списка человек не может переключить серию,
+        # не возвращаясь на сайт. Номер текущей знает только ссылка.
+        episode_list = tuple(
+            {
+                "season": e.get("season", ""),
+                "episode": e.get("episode", ""),
+                "title": e.get("title", ""),
+            }
+            for e in episodes
+        )
+        current_episode = ref.episode
+        if not current_episode and episodes:
+            # Ссылка без номера: Kodik сам выбрал серию по `vInfo`. Найти её
+            # можно только по id из подписи — если он там есть.
+            vinfo_id = str(page_vinfo(html).get("id") or "")
+            match = next((e for e in episodes if str(e.get("id")) == vinfo_id), None)
+            number = str(match.get("episode", "")) if match else ""
+            current_episode = int(number) if number.isdigit() else 1
+
         title = _title_from_html(html) or "Kodik"
+        if episodes and ref.episode:
+            label = next(
+                (e.get("title") for e in episodes if str(e.get("episode")) == str(ref.episode)),
+                f"{ref.episode} серия",
+            )
+            title = f"{title} · {label}"
         return Stream(
             source=self.name,
             title=title,
@@ -450,6 +686,8 @@ class KodikSource:
             qualities=sort_qualities(qualities),
             state=self.state,
             audio_tracks=tuple(translations),
+            episodes=episode_list,
+            episode=current_episode if episodes else 0,
         )
 
 
@@ -487,7 +725,11 @@ __all__ = [
     "fetch_links",
     "first_url",
     "page_signatures",
+    "parse_episodes",
     "parse_player_url",
     "parse_translations",
+    "pick_episode",
     "rot18",
+    "translation_episodes",
+    "url_with_episode",
 ]

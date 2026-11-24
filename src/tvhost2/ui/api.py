@@ -128,6 +128,10 @@ class Api:
         """Сменить озвучку (Kodik и подобные сайты)."""
         return self._request(f"/trans/{sid}", {"index": str(index)}, method="POST", timeout=90)
 
+    def episode(self, sid: str, index: int) -> ApiResult:
+        """Переключить серию (Kodik и подобные сериалы)."""
+        return self._request(f"/episode/{sid}", {"index": str(index)}, method="POST", timeout=90)
+
     def history(self) -> list[dict[str, Any]]:
         """Последние просмотры: до пяти, свежие сверху."""
         result = self._request("/history", timeout=6)

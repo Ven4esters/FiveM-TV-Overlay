@@ -90,6 +90,18 @@ class Session:
             "translations": [
                 t.get("title", "") for t in (self.stream.audio_tracks if self.stream else ())
             ],
+            # Какие озвучки на самом деле субтитры: у Kodik это отдельный
+            # тип перевода, и человеку полезно видеть это в списке.
+            "translationKinds": [
+                "субтитры" if t.get("translation_type") == "subtitles" else ""
+                for t in (self.stream.audio_tracks if self.stream else ())
+            ],
+            # Серии: сколько их и какая играет. Пусто — значит фильм.
+            "episodes": [
+                str(e.get("title") or e.get("episode") or "")
+                for e in (self.stream.episodes if self.stream else ())
+            ],
+            "episode": self.stream.episode if self.stream else 0,
             "duration": self.stream.duration_s if self.stream else 0,
             # Прямой эфир: у пульта пропадает перемотка и общий таймер —
             # у live нет ни длительности, ни позиции в привычном смысле.

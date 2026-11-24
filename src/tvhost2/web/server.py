@@ -38,6 +38,7 @@ from ..audio import loudness
 from ..core import diagnostics as diag
 from ..core import registry
 from ..sources import register_all
+from ..sources.kodik import url_with_episode as kodik_url_with_episode
 from . import hls as hls_bridge
 from . import player as player_page
 from . import resolver
@@ -281,6 +282,9 @@ class OverlayHandler(BaseHTTPRequestHandler):
         if path.startswith("/trans/"):
             self._translation(path[len("/trans/") :].strip("/"), query)
             return
+        if path.startswith("/episode/"):
+            self._episode(path[len("/episode/") :].strip("/"), query)
+            return
         # Сравнение ДОБАВЛЯЕТ слэш: адрес приходит как "/history/forget",
         # без хвоста. Со слэшем маршрут не срабатывал и отвечал 404 —
         # нашлось живой проверкой, тест на исходнике этого не видел.
@@ -471,6 +475,52 @@ class OverlayHandler(BaseHTTPRequestHandler):
         return self._json(
             200,
             {"ok": True, "translation": session.translation_title, "sid": session.sid},
+        )
+
+    def _episode(self, sid: str, query: dict[str, list[str]]) -> None:
+        """Переключить серию: `POST /episode/<sid>?index=3`.
+
+        Почему отдельный маршрут, а не `cmd`: серия — это НЕ команда плеера.
+        У Kodik каждая серия — отдельный поток со своими `id` и `hash`, и
+        сменить её можно только повторным разбором ссылки. Плееру после
+        этого остаётся перезагрузить страницу.
+
+        Номер серии уходит в ссылку параметром `?episode=N`: так он
+        переживает повторный разбор через час, когда за сессией вернулись.
+        """
+        session = STATE.sessions.get(sid)
+        if session is None:
+            return self._json(404, {"error": "сессия не найдена"})
+        try:
+            number = int((query.get("index") or ["0"])[0])
+        except ValueError:
+            return self._json(400, {"error": "index должен быть числом"})
+        if number < 1:
+            return self._json(400, {"error": "серия нумеруется с 1"})
+        url = kodik_url_with_episode(session.url, number)
+        try:
+            resolved = resolver.resolve(url, translation_index=session.translation_index)
+        except resolver.ResolveError as exc:
+            return self._json(200, {"ok": False, "reason": exc.message})
+        session.url = url
+        session.stream = resolved.stream
+        session.title = resolved.stream.title
+        STATE.runtime_for(sid).commands.clear()
+        STATE.history.remember(
+            url,
+            title=session.title,
+            source=session.source_name,
+            translation_index=session.translation_index,
+            translation=session.translation_title,
+        )
+        return self._json(
+            200,
+            {
+                "ok": True,
+                "episode": number,
+                "title": session.title,
+                "sid": session.sid,
+            },
         )
 
     # ---------------- поток и мост ----------------

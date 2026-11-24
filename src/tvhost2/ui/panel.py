@@ -74,6 +74,8 @@ class Panel(QWidget):
     sources_arrived = Signal(list)
     error_text = Signal(str, str)  # (что случилось, что делать)
     loudness_arrived = Signal(str)
+    episode_ready = Signal()
+    """Серия сменилась: плееру в игре надо перезагрузить страницу."""
     history_ready = Signal(list)  # список недавних просмотров
 
     def __init__(self, api: Api | None = None) -> None:
@@ -86,13 +88,30 @@ class Panel(QWidget):
         self._subtitle_titles: list[str] = []
         """Названия дорожек текущего видео — для подсказки при переключении."""
         self._last_err_key = ""
+        self._muted = False
+        """Звук выключен? Кнопка обязана ПЕРЕКЛЮЧАТЬ, а не только выключать.
+
+        Раньше здесь стояло `self._cmd("mute", True)` — то есть каждый клик
+        отправлял «выключи», и включить обратно с пульта было нечем. Это и
+        была жалоба «звук убирается, а вернуть его нельзя».
+        """
+        self._fullscreen = False
+        """Развёрнуто ли изображение. Кнопка тоже переключает, а не только
+        разворачивает: раньше она всегда слала `fullscreen=True`."""
         self._error_shown = False
         self._hint_text = ""
         self._tabs_built = False
 
         self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setWindowIcon(theme.icon("film"))
-        self.setMinimumWidth(520)
+        # Размеры. Раньше задан был только минимум по ширине, и окно
+        # «прыгало»: список недавних фиксирует высоту по числу записей,
+        # подсказка об ошибке просит высоту под текст, а журнал тянется за
+        # содержимым. В итоге окно то растягивалось вверх, то становилось
+        # шире. Теперь есть стартовый размер и ПОТОЛОК: ниже и выше него
+        # окно не полезет, что бы ни происходило внутри.
+        self.setMinimumSize(520, 460)
+        self.resize(720, 620)
 
         self._build()
         self._connect()
@@ -107,6 +126,10 @@ class Panel(QWidget):
     #                              построение
     # ------------------------------------------------------------------
     def _build(self) -> None:
+        # Потолок высоты самой карточки: содержимое (журнал, подсказка)
+        # больше не может вытянуть окно за экран.
+        self.setMaximumHeight(900)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -357,11 +380,7 @@ class Panel(QWidget):
         column.addLayout(head)
 
         column.addLayout(self._build_hint_row())
-
-        self.translation_box = QComboBox()
-        self.translation_box.setToolTip("Озвучка")
-        self.translation_box.setVisible(False)
-        column.addWidget(self.translation_box)
+        column.addLayout(self._build_picks_row())
 
         seek_row = QHBoxLayout()
         seek_row.setSpacing(theme.GAP_S)
@@ -405,6 +424,26 @@ class Panel(QWidget):
 
         self._build_norm_panel(column)
         return box
+
+    def _build_picks_row(self) -> QHBoxLayout:
+        """Озвучка и серия — в одной строке.
+
+        Два ответа на один вопрос «что именно играем», поэтому и стоят
+        рядом. Оба скрыты, пока сервер не сказал, что выбирать есть из
+        чего: пустой список озвучек или серий только путает.
+        """
+        picks = QHBoxLayout()
+        picks.setSpacing(theme.GAP_S)
+        self.translation_box = QComboBox()
+        self.translation_box.setToolTip("Озвучка")
+        self.translation_box.setVisible(False)
+        picks.addWidget(self.translation_box, 1)
+
+        self.episode_box = QComboBox()
+        self.episode_box.setToolTip("Серия")
+        self.episode_box.setVisible(False)
+        picks.addWidget(self.episode_box, 0)
+        return picks
 
     def _build_volume_controls(self, buttons) -> None:
         """Громкость и нормализация — отдельно: блок пульта не должен
@@ -541,14 +580,15 @@ class Panel(QWidget):
         self.btn_play.clicked.connect(lambda: self._cmd("toggle"))
         self.btn_back.clicked.connect(lambda: self._cmd("seekRel", -10))
         self.btn_forward.clicked.connect(lambda: self._cmd("seekRel", 10))
-        self.btn_mute.clicked.connect(lambda: self._cmd("mute", True))
+        self.btn_mute.clicked.connect(self._toggle_mute)
         self.btn_stop.clicked.connect(lambda: self._cmd("restart"))
-        self.btn_full.clicked.connect(lambda: self._cmd("fullscreen", True))
+        self.btn_full.clicked.connect(self._toggle_fullscreen)
         self.btn_subs.clicked.connect(self._cycle_subtitles)
         self.volume.sliderMoved.connect(lambda v: self._cmd("volume", round(v / 100, 2)))
         self.seek.sliderMoved.connect(self._seek_moved)
         self.quality_box.currentIndexChanged.connect(self._quality_changed)
         self.translation_box.currentIndexChanged.connect(self._translation_changed)
+        self.episode_box.activated.connect(self._episode_picked)
 
         # ответы фоновых потоков
         self.session_ready.connect(self._on_session_ready)
@@ -557,6 +597,7 @@ class Panel(QWidget):
         self.journal_arrived.connect(self._append_journal)
         self.error_text.connect(self._on_error)
         self.loudness_arrived.connect(self.norm_value.setText)
+        self.episode_ready.connect(self._after_episode)
 
     def _restore_tab(self) -> None:
         self.tabs.setCurrentIndex(0)
@@ -588,6 +629,7 @@ class Panel(QWidget):
                 return
             data = result.data or {}
             self._fill_translations(data)
+            self._fill_episodes(data)
             self.session_ready.emit(str(data.get("player") or ""), str(data.get("sid") or ""))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -610,6 +652,12 @@ class Panel(QWidget):
         self._hide_error()
         self._poll_state()
         self._load_history()
+        # Нормализация: замер нужен только когда она включена, но если
+        # включена — мерить надо СРАЗУ, а не после повторного клика.
+        # Раньше замер запускался только в обработчике тумблера, поэтому
+        # при уже включённой нормализации на новом видео висело «нет данных».
+        if self.btn_norm.isChecked():
+            self._load_loudness()
 
     def _load_history(self) -> None:
         """Перечитать список недавних. Вызывается после каждого открытия."""
@@ -654,7 +702,11 @@ class Panel(QWidget):
             step = (self.history_list.sizeHintForRow(0) or 44) + self.history_list.spacing() * 2
             frame = 2 * self.history_list.frameWidth()
             visible = min(rows, self.history_list_limit)
-            self.history_list.setFixedHeight(step * visible + frame)
+            # Не выше 40 % окна: пять длинных названий иначе вытягивали
+            # окно так, что нижние кнопки уходили за край экрана.
+            ceiling = max(0, int(self.height() * 0.4))
+            wanted = step * visible + frame
+            self.history_list.setFixedHeight(min(wanted, ceiling) if ceiling else wanted)
         has_items = bool(items)
         self.history_box.setVisible(has_items)
         self.btn_history_clear.setVisible(has_items)
@@ -682,6 +734,59 @@ class Panel(QWidget):
         self.translation_box.blockSignals(False)
         # больше одной озвучки — показываем выбор, иначе прячем: дублей не надо
         self.translation_box.setVisible(len(titles) > 1)
+
+    def _fill_episodes(self, data: dict) -> None:
+        """Нарисовать выбор серии. Скрыт, если сериал не опознан.
+
+        Данные приходят из `/new` и `/state`: список серий и номер текущей.
+        У фильмов и у источников без списков (Rutube, YouTube) там пусто —
+        тогда переключатель не показываем вовсе, а не показываем пустой.
+        """
+        titles = [str(t) for t in data.get("episodes") or []]
+        self.episode_box.blockSignals(True)
+        self.episode_box.clear()
+        if titles:
+            self.episode_box.addItems(titles)
+            current = int(data.get("episode") or 0)
+            if 1 <= current <= len(titles):
+                self.episode_box.setCurrentIndex(current - 1)
+        self.episode_box.blockSignals(False)
+        self.episode_box.setVisible(len(titles) > 1)
+
+    def _episode_picked(self, index: int) -> None:
+        """Выбрали серию: просим сервер разобрать её и открыть заново.
+
+        Почему отдельным запросом, а не командой плееру: у Kodik каждая
+        серия — свой поток со своими `id`/`hash`, «переключить дорожку»
+        физически нечего. Сервер разбирает ссылку заново, плеер в игре
+        перезагружает страницу и играет уже нужную серию.
+        """
+        if not self.sid or index < 0:
+            return
+        number = index + 1
+        self._set_remote_status(f"Пульт: открываю {number}-ю серию…")
+
+        def worker() -> None:
+            try:
+                result = self.api.episode(self.sid, number)
+            except ApiError as exc:
+                self.error_text.emit(str(exc), "Проверьте, что прокси запущен")
+                return
+            if not result.ok:
+                self.error_text.emit(result.reason, result.hint)
+                return
+            self.episode_ready.emit()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after_episode(self) -> None:
+        """Серия сменилась: обновить картинку и напомнить про плеер в игре.
+
+        Страницу плеера в игре надо перезагрузить: это отдельное окно
+        браузера, и само оно про смену серии не узнает.
+        """
+        self._set_remote_status("Пульт: серия открыта — перезагрузите телевизор (F5)")
+        self._poll_state()
 
     def _fill_qualities(self, qualities: list[str]) -> None:
         if not qualities:
@@ -760,6 +865,7 @@ class Panel(QWidget):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
         self._cmd("normalize", on)
+        self.norm_value.setText("меряю…" if on else "—")
         if on and self.sid:
             self._load_loudness()
 
@@ -811,6 +917,10 @@ class Panel(QWidget):
         # Субтитры: список приходит из /state. Пока он не пришёл, кнопка
         # молча ничего не делает — поэтому обновляем его здесь же.
         self._subtitle_titles = [str(t) for t in state.get("subtitles") or []]
+        # Серии тоже приходят в /state: после переключения номера список
+        # должен стоять на новой серии, иначе выбор «отскакивает».
+        if state.get("episodes"):
+            self._fill_episodes(state)
         if self.subs_index > len(self._subtitle_titles):
             self.subs_index = 0
         playing = bool(state.get("playing"))
@@ -849,7 +959,9 @@ class Panel(QWidget):
             width = max(self.hint_label.width(), 320)
             needed = self.hint_label.heightForWidth(width)
             if needed > 0:
-                self.hint_label.setMinimumHeight(needed + theme.GAP_S)
+                # Потолок: длинная подсказка не должна раздвигать окно.
+                # Лучше многоточие в двух строках, чем «прыжок» на пол-экрана.
+                self.hint_label.setMinimumHeight(min(needed, 96) + theme.GAP_S)
         self.btn_hint_close.setVisible(True)
         self._badge("error")
         if message != self._last_err_key:
@@ -877,11 +989,14 @@ class Panel(QWidget):
             try:
                 data = self.api.loudness(self.sid)
             except ApiError:
-                self.loudness_arrived.emit("—")
+                self.loudness_arrived.emit("не удалось замерить")
                 return
             gain = data.get("gainDb")
             if gain is None:
-                self.loudness_arrived.emit("нет данных")
+                # Сервер объясняет причину в `note` («ffmpeg не найден»,
+                # «замер не удался»). Показываем ЕЁ: «нет данных» ничего не
+                # говорит человеку и выглядит как поломка кнопки.
+                self.loudness_arrived.emit(str(data.get("note") or "замер не удался")[:34])
             elif abs(float(gain)) < 1:
                 self.loudness_arrived.emit("в норме")
             else:
@@ -950,6 +1065,37 @@ class Panel(QWidget):
             self.journal.setPlainText(text)
             self.journal.verticalScrollBar().setValue(self.journal.verticalScrollBar().maximum())
 
+    def _toggle_mute(self) -> None:
+        """Звук вкл/выкл. Состояние держим у себя: у пульта нет своего датчика.
+
+        Почему не спрашивать у сервера каждый раз: опрос идёт раз в 800 мс,
+        а нажатие — сразу. Если ждать ответа, второй клик придёт раньше, чем
+        обновится состояние, и человек «не сможет включить обратно» даже с
+        исправной кнопкой.
+        """
+        self._muted = not self._muted
+        self._cmd("mute", self._muted)
+        self._paint_mute()
+        self._set_remote_status("Звук выключен" if self._muted else "Звук включён")
+
+    def _paint_mute(self) -> None:
+        """Иконка и подсветка кнопки звука по нашему состоянию."""
+        self.btn_mute.setIcon(theme.icon("muted" if self._muted else "volume", 20))
+        self.btn_mute.setProperty("active", "false" if self._muted else "true")
+        self.btn_mute.style().unpolish(self.btn_mute)
+        self.btn_mute.style().polish(self.btn_mute)
+
+    def _toggle_fullscreen(self) -> None:
+        """Развернуть / свернуть изображение в игре.
+
+        Важно понимать, что именно разворачивается: не окно пульта, а
+        `<video>` на странице плеера, которую открывает игра. Поэтому
+        команда уходит в сессию, а не в Qt.
+        """
+        self._fullscreen = not self._fullscreen
+        self._cmd("fullscreen", self._fullscreen)
+        self._set_remote_status("Развёрнуто" if self._fullscreen else "Свёрнуто")
+
     def _cycle_subtitles(self) -> None:
         """Переключить субтитры по кругу: выкл → дорожка 1 → 2 → … → выкл.
 
@@ -959,7 +1105,14 @@ class Panel(QWidget):
         """
         count = len(self._subtitle_titles)
         if count == 0:
-            self._set_remote_status("У этого видео нет субтитров")
+            # Объясняем причину, а не просто «нет»: у Kodik субтитры — это
+            # не дорожка `<track>`, а отдельная ОЗВУЧКА с типом
+            # `data-translation-type="subtitles"`. Она приходит в списке
+            # озвучек, и включать её надо там — кнопка CC тут ни при чём.
+            hint = "У этого видео нет дорожек субтитров"
+            if self.translation_box.count() > 0:
+                hint += " — ищите их в списке озвучек"
+            self._set_remote_status(hint)
             return
         self.subs_index = (self.subs_index + 1) % (count + 1)
         self._cmd("subs", self.subs_index)
