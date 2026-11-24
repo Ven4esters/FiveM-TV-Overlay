@@ -7,14 +7,20 @@
     player._wsHlsSource = hX.hlsSource;
     quality = hX.hlsSource[i].quality;   // {"428": "https://…/master.m3u8"}
 
-Живого образца с российской машины у нас пока нет — его снимет пробник
-`tools/alloha/probe_bnsi.py`. Тесты держат форму ответа, чтобы разбор не
-поехал от первой же правки.
+Образец с российской машины получен 24.11.2026 (заказчик прогнал
+`check_alloha.bat`): страница плеера пришла, `fileList` в ней есть, но
+`POST /bnsi` ответил «контент не найден». Причина оказалась не в регионе,
+а в НОМЕРЕ ФАЙЛА: пробник перебирал `id_file` из разметки, а там у файлов
+`null`; правильный id — `active.id` либо файл запрошенной озвучки. Тесты
+на реальной странице заказчика (`fixtures/alloha_player.html`) это держат.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
+import pytest
 
 from tvhost2.core.models import Quality
 from tvhost2.sources import alloha, alloha_bnsi
@@ -60,10 +66,70 @@ class TestFileList:
     def test_meta_found(self) -> None:
         assert alloha_bnsi.meta_of(PLAYER_HTML).startswith("WF1ENlE6")
 
-    def test_ids_in_order_without_nulls(self) -> None:
-        """`id_file: null` отбрасывается: с ним в адресе делать нечего."""
+    def test_active_id_goes_first(self) -> None:
+        """Первым — `active.id`, а не `id_file` и не «первое число в тексте».
+
+        На живом образце `active.id` был 1836882, а `id_file` — 1836464;
+        в запрос идёт именно `id`.
+        """
         ids = alloha_bnsi.file_ids(PLAYER_HTML)
-        assert ids == ["1836464"]
+        assert ids[0] == "1836882"
+
+    def test_no_null_ids(self) -> None:
+        """`id_file: null` не попадает в список: с null в адресе делать нечего."""
+        assert "1836464" not in alloha_bnsi.file_ids(PLAYER_HTML)
+
+    def test_asked_translation_first_after_active(self) -> None:
+        """Сразу за активным — тот же эпизод ЗАПРОШЕННОЙ озвучки.
+
+        Разбор образца заказчика: активным был файл серии 6 озвучки 93, а
+        страница просила серию 1 озвучки 96 — и правильный ответ 1847894.
+        Раньше перебор начинался с id_file, то есть с чужого файла, и Alloha
+        отвечала «контент не найден» — неотличимо от отказа по региону.
+        """
+        embed = "https://tories-as.stravers.live/?token_movie=x&translation=96&season=1&episode=1"
+        ids = alloha_bnsi.file_ids(PLAYER_HTML, embed)
+        assert ids[:2] == ["1836882", "1847894"]
+
+
+class TestRealPageSample:
+    """Проверки на реальной странице плеера заказчика (всё в фикстуре).
+
+    Файл `fixtures/alloha_player.html` — тот самый, что прислал заказчик.
+    Урок, который эти тесты закрепляют: `fileList` надо разбирать как JSON
+    и искать файл по пути (сезон/серия/озвучка), а не тянуть первое число.
+    """
+
+    @pytest.fixture(scope="class")
+    def player(self) -> str:
+        return (Path(__file__).parent / "fixtures" / "alloha_player.html").read_text("utf-8")
+
+    def test_file_list_parsed(self, player: str) -> None:
+        data = alloha_bnsi.file_list(player)
+        assert data.get("type") == "serial"
+        assert data["active"]["id"] == 1836882
+
+    def test_series_and_translation_resolved(self, player: str) -> None:
+        """Серия 1, озвучка 96 → 1847894 (а не 1836402 из озвучки 338)."""
+        embed = (
+            "https://tories-as.stravers.live/?token_movie=dc27f0f0f45c4989af12f74b6a7757"
+            "&translation=96&season=1&episode=1"
+        )
+        ids = alloha_bnsi.file_ids(player, embed)
+        assert ids[:2] == ["1836882", "1847894"]
+        assert "1836402" in ids, "файлы остальных озвучек остаются как запасные"
+
+    def test_other_translations_differ(self, player: str) -> None:
+        """У каждой озвучки свой id того же эпизода — это и есть причина провала."""
+
+        def first_after_active(tr: str) -> str:
+            embed = f"https://x/?token_movie=x&translation={tr}&season=1&episode=1"
+            return alloha_bnsi.file_ids(player, embed)[1]
+
+        assert first_after_active("96") == "1847894"
+        assert first_after_active("338") == "1836402"
+        assert first_after_active("241") == "1831135"
+        assert first_after_active("93") == "1836787"
 
     def test_kind_defaults_to_serial(self) -> None:
         assert alloha_bnsi.kind_of(PLAYER_HTML) == "serial"

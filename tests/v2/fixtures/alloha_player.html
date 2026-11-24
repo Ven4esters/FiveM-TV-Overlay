@@ -1,0 +1,227 @@
+﻿<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Player</title>
+    <meta name="referrer" content="no-referrer-when-downgrade">
+        <meta name="robots" content="noindex,nofollow,noarchive">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewporti" content="WF1ENlE65P2xzcoY0EFD0wtVzmV10kWn0X1TJ1UxpJZFdlZy8yUyuRIHScYLXF2mETTzHUnHMcQeQNdNNMNUbMba">
+
+    <script>(function(){var _W=WebSocket;Object.defineProperty(window,'__ws_factory',{value:function(u){return new _W(u)},writable:false,configurable:false,enumerable:false})})()</script>
+
+            <link rel="stylesheet" href="/build/app.41b5644d.css" integrity="sha384-Doeyo/1RyqbnRY6ViLMUFNxlIXVibKwDuSxbb+ZxvZu9Z5/IET1VfnKBsQweAh3B">
+                <script src="./js/rmp-vast.min.js?v=2.8"></script>
+        <script src="/build/runtime.85d0f10b.js" defer integrity="sha384-2Z2ShLxGF9crQ82UFDyTNJAwPG+1yWl94GDEKHNH9ehKinb5f3lnYZl/jcTCqL+Q"></script><script src="/build/132.5569ad15.js" defer integrity="sha384-THHkqAEUOeAD0qQMtXYb99sjShMqWJgVA0DGeKU2GAKKszB7PXHUscisd/+hv1UX"></script><script src="/build/app.c63ca8da.js" defer integrity="sha384-8KYCQkkPohpNKCRT7AIFSXuuLuaaNbvILjxKysU6fMRAkCg8kz5eI83EFV5Mr8H0"></script>
+    </head>
+<body >
+    
+    <script>
+	const userParam = {
+		token: '5286c49a9d29cad731353b68d3f1f5',
+		domain: 'https%3A%2F%2Ftories-as.stravers.live%2F%3Ftoken%3D5286c49a9d29cad731353b68d3f1f5%26token_movie%3Ddc27f0f0f45c4989af12f74b6a7757%26translation%3D93',
+		refToken: '',
+        device: 0,
+		selector: 1,
+		autoPlayChange: 1,
+		saveTime: 1,
+        hidden: JSON.parse('[]'),
+        fullscreen: 0,
+		autoplay: 0,
+		start: '0',
+		audio: '',
+		subtitle: '',
+        log: 0,
+        debug: 0,
+	};
+    const movie = {
+        id: 'dc27f0f0f45c4989af12f74b6a7757',
+        type: 'movie',
+    };
+    const urlPLog = 'https://ppc.ipchanger.live:11443/index.php?md5=wM_OIDk3ClQHSMDOyGijGg&expires=1795577137';
+    // Связь со скриптом актуализации на странице сайта. boot — документ плеера загрузился; p: 1 — плеер уже запущен
+    // (пошло видео или реклама либо зритель что-то нажал в плеере): такой фрейм скрипт не перезагружает.
+    // Скрипт, который загрузился позже плеера, спрашивает его состояние сообщением hello.
+    (function () {
+        if (!window.parent || window.parent === window) return;
+        var started = 0;
+        var send = function () {
+            try { window.parent.postMessage({ __ap: 'boot', h: location.host, p: started }, '*'); } catch (e) {}
+        };
+        var onStart = function (e) {
+            // isTrusted: программные события (plyr дублирует play своим событием, код вызывает click()) запуском не считаются
+            if (started || (e && e.isTrusted === false)) return;
+            started = 1;
+            send();
+        };
+        try {
+            document.addEventListener('play', onStart, true);
+            document.addEventListener('click', onStart, true);
+            document.addEventListener('keydown', onStart, true);
+            window.addEventListener('message', function (e) {
+                if (e.source === window.parent && e.data && e.data.__ap === 'hello') send();
+            });
+        } catch (e) {}
+        send();
+    })();
+    </script>
+
+    <video src="" id="player" crossorigin></video>
+
+    
+
+    
+<div class="selects ui">
+
+						<div class="select" data-select="seasonType1">
+	<button type="button" class="select__item">
+		<span class="select__item-text">
+			Сезон 1
+		</span>
+		<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+			<path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"></path>
+			<path fill="none" d="M0 0h24v24H0V0z"></path>
+		</svg>
+	</button>
+	<div class="select__drop baron baron__root baron__clippe _scrollbar">
+		<div class="baron__scroller">
+		
+					<button type="button" data-id="1" class="select__drop-item active">
+				Сезон 1
+			</button>
+				</div>
+		<div class="baron__track"><div class="baron__bar"></div></div>
+	</div>
+</div>
+
+<div class="select" data-select="episodeType1">
+	<button type="button" class="select__item">
+		<span class="select__item-text">
+			Серия 6
+		</span>
+		<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+			<path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"></path>
+			<path fill="none" d="M0 0h24v24H0V0z"></path>
+		</svg>
+	</button>
+	<div class="select__drop baron baron__root baron__clippe _scrollbar">
+		<div class="baron__scroller">
+							<button type="button" data-id="1" class="select__drop-item">
+				Серия 1
+			</button>
+					<button type="button" data-id="2" class="select__drop-item">
+				Серия 2
+			</button>
+					<button type="button" data-id="3" class="select__drop-item">
+				Серия 3
+			</button>
+					<button type="button" data-id="4" class="select__drop-item">
+				Серия 4
+			</button>
+					<button type="button" data-id="5" class="select__drop-item">
+				Серия 5
+			</button>
+					<button type="button" data-id="6" class="select__drop-item active">
+				Серия 6
+			</button>
+				</div>
+		<div class="baron__track"><div class="baron__bar"></div></div>
+	</div>
+</div>
+
+<div class="select" data-select="translationType1">
+	<button type="button" class="select__item">
+		<span class="select__item-text">
+			Оригинальный
+					</span>
+		<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+			<path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"></path>
+			<path fill="none" d="M0 0h24v24H0V0z"></path>
+		</svg>
+	</button>
+	<div class="select__drop baron baron__root baron__clippe _scrollbar">
+		<div class="baron__scroller">
+					<button type="button" data-id="t338" class="select__drop-item">
+				WinMedia
+							</button>
+					<button type="button" data-id="t241" class="select__drop-item">
+				LE-Production
+							</button>
+					<button type="button" data-id="t93" class="select__drop-item active">
+				Оригинальный
+							</button>
+				</div>
+		<div class="baron__track"><div class="baron__bar"></div></div>
+	</div>
+</div>
+
+			</div>
+
+
+<div class="time_save hidden">
+	<button class="time_save__close" title="Закрыть" type="button">
+		<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewbox="0 0 24 24">
+			<path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path>
+			<path d="M0 0h24v24H0z" fill="none"></path>
+		</svg>
+	</button>
+	<div class="time_save__title"></div>
+	<button class="btn primary time_save__btn" type="button">Продолжить просмотр</button>
+</div>
+
+<script>
+	const config = JSON.parse('{"debug":true,"mediaMetadata":{"title":"\u0425\u043e\u0440\u043e\u0448\u0430\u044f \u0434\u043e\u0447\u044c (2026)"},"poster":"","ads":{"enabled":true,"preroll":"jsf:rotateP","midroll":[{"time":0,"link":"jsf:rotatePM"},{"time":"300","link":"jsf:rotateM1"}],"replace":{"[kp]":12395264,"[cat]":"serial","[token]":"5286c49a9d29cad731353b68d3f1f5","[domain]":"https%3A%2F%2Ftories-as.stravers.live%2F%3Ftoken%3D5286c49a9d29cad731353b68d3f1f5%26token_movie%3Ddc27f0f0f45c4989af12f74b6a7757%26translation%3D93","[type]":1,"[user]":590,"[count_preroll]":2,"[count_midroll]":1,"[movie]":0,"[is_trailer]":false},"midrollConfig":{"count":1,"interval":60,"onlyNoAds":false,"minDuration":500,"safeTimeToEnd":180,"link":"jsf:rotateM"},"pauseroll":"jsf:rotatePA","postroll":"jsf:rotatePO"},"controls":["play-large","play","progress","current-time","duration","prev","next","mute","volume","captions","settings","pip","fullscreen"],"settings":["quality","audio","captions","speed","scale","bugReport","paramsLang"]}');
+	const fileList = JSON.parse('{"type":"serial","active":{"id":1836882,"id_file":"1836464","seasons":1,"episode":6,"directors_cut":false,"translation":"\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439","id_translation":93,"quality":"WEB-DL","id_quality":7,"uhd":0},"all":{"1":{"1":{"t96":{"id":1847894,"id_file":null,"seasons":1,"episode":1,"directors_cut":false,"translation":"TVShows","id_translation":96,"quality":"WEB-DL","id_quality":7,"uhd":1},"t338":{"id":1836402,"id_file":null,"seasons":1,"episode":1,"directors_cut":false,"translation":"WinMedia","id_translation":338,"quality":"WEB-DL","id_quality":7,"uhd":0},"t241":{"id":1831135,"id_file":null,"seasons":1,"episode":1,"directors_cut":false,"translation":"LE-Production","id_translation":241,"quality":"WEBRip","id_quality":8,"uhd":0},"t93":{"id":1836787,"id_file":"1836402","seasons":1,"episode":1,"directors_cut":false,"translation":"\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439","id_translation":93,"quality":"WEB-DL","id_quality":7,"uhd":0}},"2":{"t338":{"id":1836417,"id_file":null,"seasons":1,"episode":2,"directors_cut":false,"translation":"WinMedia","id_translation":338,"quality":"WEB-DL","id_quality":7,"uhd":0},"t241":{"id":1830855,"id_file":null,"seasons":1,"episode":2,"directors_cut":false,"translation":"LE-Production","id_translation":241,"quality":"WEBRip","id_quality":8,"uhd":0},"t93":{"id":1836847,"id_file":"1836417","seasons":1,"episode":2,"directors_cut":false,"translation":"\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439","id_translation":93,"quality":"WEB-DL","id_quality":7,"uhd":0}},"3":{"t338":{"id":1836429,"id_file":null,"seasons":1,"episode":3,"directors_cut":false,"translation":"WinMedia","id_translation":338,"quality":"WEB-DL","id_quality":7,"uhd":0},"t241":{"id":1830870,"id_file":null,"seasons":1,"episode":3,"directors_cut":false,"translation":"LE-Production","id_translation":241,"quality":"WEBRip","id_quality":8,"uhd":0},"t93":{"id":1836852,"id_file":"1836429","seasons":1,"episode":3,"directors_cut":false,"translation":"\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439","id_translation":93,"quality":"WEB-DL","id_quality":7,"uhd":0}},"4":{"t338":{"id":1836442,"id_file":null,"seasons":1,"episode":4,"directors_cut":false,"translation":"WinMedia","id_translation":338,"quality":"WEB-DL","id_quality":7,"uhd":0},"t241":{"id":1830875,"id_file":null,"seasons":1,"episode":4,"directors_cut":false,"translation":"LE-Production","id_translation":241,"quality":"WEBRip","id_quality":8,"uhd":0},"t93":{"id":1836872,"id_file":"1836442","seasons":1,"episode":4,"directors_cut":false,"translation":"\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439","id_translation":93,"quality":"WEB-DL","id_quality":7,"uhd":0}},"5":{"t338":{"id":1836457,"id_file":null,"seasons":1,"episode":5,"directors_cut":false,"translation":"WinMedia","id_translation":338,"quality":"WEB-DL","id_quality":7,"uhd":0},"t241":{"id":1830890,"id_file":null,"seasons":1,"episode":5,"directors_cut":false,"translation":"LE-Production","id_translation":241,"quality":"WEBRip","id_quality":8,"uhd":0},"t93":{"id":1836877,"id_file":"1836457","seasons":1,"episode":5,"directors_cut":false,"translation":"\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439","id_translation":93,"quality":"WEB-DL","id_quality":7,"uhd":0}},"6":{"t338":{"id":1836464,"id_file":null,"seasons":1,"episode":6,"directors_cut":false,"translation":"WinMedia","id_translation":338,"quality":"WEB-DL","id_quality":7,"uhd":0},"t241":{"id":1830915,"id_file":null,"seasons":1,"episode":6,"directors_cut":false,"translation":"LE-Production","id_translation":241,"quality":"WEBRip","id_quality":8,"uhd":0},"t93":{"id":1836882,"id_file":"1836464","seasons":1,"episode":6,"directors_cut":false,"translation":"\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b\u044c\u043d\u044b\u0439","id_translation":93,"quality":"WEB-DL","id_quality":7,"uhd":0}}}},"translationList":[338,241,93,96]}');
+</script>
+
+    <div class="loader"></div>
+
+    <div class="error_message hidden">
+        <strong>Упс. Ошибка!</strong>
+        <div>Пожалуйста, перезагрузите плеер и повторите попытку!</div>
+        <button class="btn error_message__btn" type="button">Перезагрузить плеер</button>
+    </div>
+
+    <div class="error_message error_unsupported error_unsupported--generic hidden">
+        <strong>Браузер не поддерживается</strong>
+        <div>Для воспроизведения видео обновите браузер до последней версии или установите <a href="https://www.google.com/chrome/" target="_blank" rel="noopener">Google Chrome</a></div>
+    </div>
+
+    <div class="error_message error_unsupported error_unsupported--ios hidden">
+        <strong>Обновите iOS</strong>
+        <div>Для воспроизведения видео нужна iOS 18 или новее. Обновите устройство: «Настройки» → «Основные» → «Обновление ПО».</div>
+    </div>
+
+    <div class="modal bag_report--modal hidden">
+        <form class="bag_report__form">
+            <div class="modal__title">Сообщить об ошибке</div>
+            <button class="modal__close modal--close" type="button">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewbox="0 0 24 24">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path>
+                    <path d="M0 0h24v24H0z" fill="none"></path>
+                </svg>
+            </button>
+
+            <input type="email" name="email" class="modal__input" placeholder="Для обратной связи оставьте свой почтовый адрес">
+            <textarea name="text" cols="30" rows="10" class="modal__input" placeholder="Опишите ошибку максимально подробно, чтобы мы могли её воспроизвести" required minlength="15"></textarea>
+
+            <div class="captcha-wrap">
+                <img id="captcha-img" alt="Проверка">
+                <button type="button" id="captcha-refresh" title="Обновить">↻</button>
+                <input type="number" name="captcha_answer" id="captcha-answer" placeholder="Ответ" min="0" max="99" required>
+                <input type="hidden" id="captcha-token" name="captcha_token">
+            </div>
+
+            <div class="modal__message"></div>
+            <div class="modal__btns">
+                <button class="btn modal--close modal__btn error" type="button">Отмена</button>
+                <button class="btn modal__btn modal__send">Отправить</button>
+            </div>
+        </form>
+    </div>
+
+    <div id="log"></div>
+
+</body>
+</html>
+

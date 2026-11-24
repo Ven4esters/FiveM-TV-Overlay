@@ -50,10 +50,20 @@ META_RE = re.compile(r'name="viewporti"\s+content="([^"]+)"')
 """Мета, из которой плеер собирает вторую половину `Borth`."""
 
 FILE_LIST_RE = re.compile(r"fileList\s*[:=]\s*(\{.*?\})\s*[,;]\s*(?:const|var|let|\n)", re.S)
-"""`fileList` — список файлов: в нём есть `id_file` и тип (фильм/сериал)."""
+"""`fileList` — список файлов: тип (фильм/сериал), активный файл и все серии."""
 
-ID_FILE_RE = re.compile(r'"id_file"\s*:\s*"?(\d+)"?')
-"""Номер файла — то, что идёт в адрес POST."""
+FILE_LIST_PARSE_RE = re.compile(r"fileList\s*=\s*JSON\.parse\('(.+?)'\)", re.S)
+"""Та же разметка, но в том виде, в каком её кладёт плеер: JSON внутри строки.
+
+Разбирать регуляркой `"id_file": (\\d+)` нельзя: у файлов из `fileList`
+`id_file` почти всегда `null`, а числовой `id` есть у всех. Плюс один и тот
+же эпизод лежит в списке по каждой озвучке, и id у них РАЗНЫЕ — поэтому
+нельзя брать «первый попавшийся»: нужен именно тот, что для запрошенной
+озвучки.
+"""
+
+ID_FIELD_RE = re.compile(r'"(?P<key>id_file|id)"\s*:\s*"?\d+"?')
+"""Запасной путь, если JSON не разобрался: видим, какие числа вообще есть."""
 
 TYPE_RE = re.compile(r'"type"\s*:\s*"(trailer|serial|movie)"')
 """Тип определяет ветку адреса: `/trailers/` или `/movies/`."""
@@ -71,22 +81,155 @@ def meta_of(player_html: str) -> str:
     return match.group(1) if match else ""
 
 
-def file_ids(player_html: str) -> list[str]:
-    """Номера файлов из `fileList`, в порядке разметки, без повторов.
+def file_list(player_html: str) -> dict[str, Any]:
+    """`fileList` как словарь. Пусто — если разметка другая или её нет."""
+    match = FILE_LIST_PARSE_RE.search(player_html or "")
+    if not match:
+        block = FILE_LIST_RE.search(player_html or "")
+        if not block:
+            return {}
+        match_text = block.group(1)
+    else:
+        match_text = match.group(1)
+    try:
+        data = json.loads(match_text)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
-    Первым идёт активный файл: в присланной странице это эпизод 6, и именно
-    его плеер запрашивает при открытии.
+
+def active_file(player_html: str) -> dict[str, Any]:
+    """Активный файл из `fileList` — тот, что плеер открывает первым."""
+    active = file_list(player_html).get("active")
+    return active if isinstance(active, dict) else {}
+
+
+def translation_id(embed: str) -> str:
+    """Озвучка, которую просили: `translation=` из адреса встройки.
+
+    Именно её файл и нужен: в `fileList` один и тот же эпизод лежит по разу
+    на каждую озвучку, и id у них разные. Запрос с id чужой озвучки Alloha
+    отвергает так же, как несуществующий, — «контент не найден».
     """
-    text = player_html or ""
-    block = FILE_LIST_RE.search(text)
-    if block:
-        text = block.group(1)
-    ids: list[str] = []
-    for match in ID_FILE_RE.finditer(text):
-        value = match.group(1)
-        if value not in ids:
-            ids.append(value)
-    return ids
+    match = re.search(r"[?&]translation=(\d+)", embed or "")
+    return match.group(1) if match else ""
+
+
+def _files(data: dict[str, Any]) -> list[tuple[tuple[str, ...], dict[str, Any]]]:
+    """Все файлы из `fileList.all` вместе с путём до них.
+
+    Формы бывают две, и обе надо поддержать:
+
+        сериал:  all["1"]["1"]["t96"] = {"id": 1847894, …}
+        фильм:   all["t96"]           = {"id": 1847894, …}
+
+    Путь нужен целиком: только по нему видно, какая это серия и какая
+    озвучка. Без этого легко взять «первый попавшийся id» — а он почти
+    всегда от другой серии или озвучки, и Alloha на такой запрос отвечает
+    «контент не найден» (проверено на образце заказчика).
+    """
+    result: list[tuple[tuple[str, ...], dict[str, Any]]] = []
+    all_block = data.get("all")
+    if not isinstance(all_block, dict):
+        return result
+
+    def walk(node: Any, path: tuple[str, ...]) -> None:
+        if not isinstance(node, dict):
+            return
+        if "id" in node:
+            result.append((path, node))
+            return
+        for key, child in node.items():
+            walk(child, (*path, str(key)))
+
+    walk(all_block, ())
+    return result
+
+
+def _translation_key(path: tuple[str, ...]) -> str:
+    """Ключ озвучки в пути: `t96`, `t338`… (у фильмов он же единственный)."""
+    return path[-1] if path and path[-1].startswith("t") else ""
+
+
+def _season_episode(path: tuple[str, ...]) -> tuple[str, str]:
+    """Сезон и серия из пути; у фильма — пустые строки."""
+    numbers = [part for part in path if part.isdigit()]
+    if len(numbers) >= 2:  # noqa: PLR2004 — сезон+серия это ровно два числа
+        return numbers[0], numbers[1]
+    return "", ""
+
+
+def file_ids(player_html: str, embed: str = "") -> list[str]:
+    """Id файлов для `POST /bnsi` — в порядке, в каком их стоит пробовать.
+
+    В адрес запроса идёт `id`, а НЕ `id_file`: в расшифровке плеера видно,
+    как активный файл передаётся в `iB(…['id'])` → `iT(hq)` → `hF+hq`.
+    У файлов в `fileList` поле `id_file` почти всегда `null`, а числовой `id`
+    есть у всех.
+
+    Порядок:
+      1. активный файл (`active.id`) — его плеер и открывает;
+      2. тот же сезон и серия, но в запрошенной озвучке (`translation=` из
+         адреса встройки);
+      3. первая серия запрошенной озвучки;
+      4. всё остальное по порядку (сначала запрошенная озвучка).
+
+    Почему именно так: на образце заказчика активным был файл серии 6
+    озвучки 93 (`id 1836882`), а страница просила серию 1 озвучки 96
+    (`id 1847894`). Запрос с чужим id Alloha отвергает так же, как
+    несуществующий, и это выглядит как отказ по региону — хотя дело было
+    в номере файла.
+    """
+    data = file_list(player_html)
+    result: list[str] = []
+
+    def add(value: Any) -> None:
+        text = str(value) if isinstance(value, int | str) else ""
+        if text.isdigit() and text not in result:
+            result.append(text)
+
+    if not data:
+        # Разметка не разобралась — вытаскиваем числа как есть, лишь бы не молчать.
+        for match in re.finditer(r'"id"\s*:\s*"?(\d+)"?', player_html or ""):
+            add(match.group(1))
+        return result
+
+    active = active_file(player_html)
+    add(active.get("id"))
+    active_id = str(active.get("id") or "")
+
+    files = _files(data)
+    wanted = translation_id(embed)
+    wanted_key = f"t{wanted}" if wanted else ""
+
+    # Где мы сейчас: серия и озвучка активного файла, поправленные адресом.
+    active_path = next((path for path, node in files if str(node.get("id")) == active_id), ())
+    season, episode = _season_episode(active_path)
+    asked_season = re.search(r"[?&]season=(\d+)", embed or "")
+    asked_episode = re.search(r"[?&]episode=(\d+)", embed or "")
+    season = asked_season.group(1) if asked_season else season
+    episode = asked_episode.group(1) if asked_episode else episode
+
+    def key_of(path: tuple[str, ...]) -> tuple[str, str, str]:
+        file_season, file_episode = _season_episode(path)
+        return (file_season, file_episode, _translation_key(path))
+
+    ordered = sorted(files, key=lambda item: key_of(item[0]))
+
+    # 2) та же серия в запрошенной озвучке
+    if wanted_key:
+        for path, node in ordered:
+            if key_of(path)[:2] == (season, episode) and _translation_key(path) == wanted_key:
+                add(node.get("id"))
+        # 3) первая серия запрошенной озвучки
+        for path, node in ordered:
+            if _translation_key(path) == wanted_key:
+                add(node.get("id"))
+                break
+    # 4) всё остальное, запрошенная озвучка раньше прочих
+    for _, node in ordered:
+        add(node.get("id"))
+    return result
 
 
 def borth_for(player_html: str) -> str:
@@ -221,7 +364,7 @@ def fetch_sources(embed: str, player_html: str) -> tuple[str, list[dict[str, Any
     """
     borth = borth_for(player_html)
     kind = kind_of(player_html)
-    ids = file_ids(player_html)
+    ids = file_ids(player_html, embed)
     last_body = ""
     for ident in ids[:6]:
         url = bnsi_path(embed, kind, ident)
