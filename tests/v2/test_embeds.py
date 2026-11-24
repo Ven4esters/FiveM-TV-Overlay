@@ -194,7 +194,7 @@ class TestMessages:
         from tvhost2.core.errors import SourceFailedError
 
         source = yummy.YummyAnimeSource()
-        source._players["https://old.yummyani.me/catalog/item/x"] = {"CVH"}
+        source._players.put("https://old.yummyani.me/catalog/item/x", {"CVH"})
         with pytest.raises(SourceFailedError) as caught:
             source.resolve("https://old.yummyani.me/catalog/item/x")
         assert "CVH" in str(caught.value)

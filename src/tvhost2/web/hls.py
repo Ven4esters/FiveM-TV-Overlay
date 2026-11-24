@@ -19,8 +19,6 @@ import urllib.parse
 
 log = logging.getLogger(__name__)
 
-PLAYLIST_TYPES = ("application/vnd.apple.mpegurl", "application/x-mpegurl", "audio/mpegurl")
-
 
 def is_playlist(body: bytes) -> bool:
     """Это плейлист или сегмент? Смотрим содержимое, а не расширение.

@@ -210,8 +210,3 @@ def wait_ready(result: Muxed, timeout: float = START_TIMEOUT_S) -> bool:
 def local_playlist_path(muxed: Muxed) -> str:
     """Путь для моста в виде file:///… — мост умеет и локальные файлы."""
     return "file://" + urllib.parse.quote(str(muxed.playlist.resolve()))
-
-
-def local_segment_url(muxed: Muxed, name: str) -> str:
-    """Адрес сегмента на диске в виде file:///…."""
-    return "file://" + urllib.parse.quote(str((muxed.folder / name).resolve()))

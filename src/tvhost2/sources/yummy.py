@@ -39,12 +39,20 @@ import re
 import urllib.parse
 from typing import Any
 
+from ..core.cache import TTLCache
 from ..core.errors import SourceFailedError
 from ..core.models import SourceState, Stream
 from ..web.fetch import FetchError, fetch_text
 from . import cvh
 from .kodik import KodikSource
 from .kodik_embed import page_title
+
+CACHE_LIMIT = 32
+"""Сколько страниц помним. У тайтла сотни килобайт дорожек, и без
+предела словарь рос бы с каждой открытой ссылкой, а чистился никогда."""
+
+CACHE_TTL_S = 600
+"""Через десять минут страницу перечитаем: дорожки у сайта меняются."""
 
 HOSTS = ("yummyani.me", "yani.tv", "yummy-anime.ru")
 """Домены каталога. Проверяем по окончанию, чтобы `old.` и `ru.` попадали."""
@@ -53,10 +61,6 @@ _PAGE_ID_RE = re.compile(r'id="page_id"[^>]*content="(\d+)"')
 """Номер тайтла: `<meta id="page_id" name="page_id" content="10618">`."""
 
 _NAME = "YummyAnime"
-
-DEFAULT_SEASON = 1
-"""Сезон по умолчанию. У сайта сезон выбирается отдельно, а мы открываем
-первый: в 9 из 10 случаев человек смотрит с начала."""
 
 
 def players_present(data: Any) -> set[str]:
@@ -166,17 +170,18 @@ class YummyAnimeSource:
 
     def __init__(self) -> None:
         self._inner = KodikSource()
-        self._titles: dict[str, str] = {}
+        self._titles: TTLCache[str] = TTLCache(limit=CACHE_LIMIT, ttl_s=CACHE_TTL_S)
         """Название тайтла со страницы. Плеер отдаёт в `title` слово «Kodik»,
         и без этого в «Недавних» вместо аниме стояло имя плеера."""
 
-        self._players: dict[str, set[str]] = {}
+        self._players: TTLCache[set[str]] = TTLCache(limit=CACHE_LIMIT, ttl_s=CACHE_TTL_S)
         """Плееры, найденные на странице — для текста отказа."""
 
-        self._cache: dict[str, list[dict[str, str]]] = {}
+        self._cache: TTLCache[list[dict[str, str]]] = TTLCache(limit=CACHE_LIMIT, ttl_s=CACHE_TTL_S)
         """Дорожки Kodik по адресу страницы. Список 218 КБ и переключение
         озвучки — повторный разбор: без кэша на каждый клик качали бы его
-        заново."""
+        заново. Предел обязателен: дорожки одного тайтла — сотни килобайт,
+        и без предела словарь рос бы с каждой открытой страницей."""
 
     # ---------------------------------------------------------------- поиск
 
@@ -210,9 +215,9 @@ class YummyAnimeSource:
         tracks = [{**track, "player": "kodik"} for track in kodik_embeds(data)]
         tracks += [{**track, "player": "cvh"} for track in cvh_embeds(data)]
         if tracks:
-            self._cache[page_url] = tracks
-        self._players[page_url] = players_present(data)
-        self._titles[page_url] = page_title(html)
+            self._cache.put(page_url, tracks)
+        self._players.put(page_url, players_present(data))
+        self._titles.put(page_url, page_title(html))
         return tracks
 
     def url_with_episode(self, url: str, number: int) -> str:
@@ -230,7 +235,7 @@ class YummyAnimeSource:
         добавить новый плеер, и он попадёт в текст отказа сам.
         """
         self._tracks(page_url)
-        return self._players.get(page_url, set())
+        return self._players.get(page_url) or set()
 
     # --------------------------------------------------------------- разбор
 

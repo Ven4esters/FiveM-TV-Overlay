@@ -39,11 +39,6 @@ log = logging.getLogger(__name__)
 
 _ID_RE = re.compile(r"(?:ok\.ru|odnoklassniki\.ru)/(?:video|web_video)/(\d+)", re.IGNORECASE)
 
-HLS_PREFIX = "hls-"
-"""yt-dlp называет HLS-дорожки OK.ru `hls-<высота>`. По этому префиксу
-отличаем их от прямых файлов `webm-*` без разбора кодека — кодек у OK.ru
-в метаданных не заполнен, доверять ему нельзя."""
-
 
 class OkRuSource(YtDlpSource):
     name = "OK.ru"

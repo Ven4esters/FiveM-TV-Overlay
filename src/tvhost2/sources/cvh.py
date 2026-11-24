@@ -31,12 +31,11 @@ from __future__ import annotations
 
 import logging
 import re
-import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
+from ..core.cache import SizeCache, TTLCache, file_key
 from ..core.errors import SourceFailedError
 from ..core.models import Quality, SourceState, Stream, StreamKind, sort_qualities
 from ..web.fetch import FetchError, fetch, json_get
@@ -100,62 +99,22 @@ class CvhParams:
         return f"{API}/playlist?" + "&".join(parts)
 
 
-class _PlaylistCache:
-    """Кэш плейлистов по ключу «сайт + тайтл». Потокобезопасный: прокси
-    многопоточный."""
+MAX_PLAYLISTS = 8
+"""Плейлист — это сотни килобайт (`Ван-Пис` — 615 КБ). Держим не больше
+восьми: человек смотрит один сериал, редко два, а старое не пригодится —
+TTL и так 10 минут."""
 
-    def __init__(self) -> None:
-        self._items: dict[str, tuple[float, dict[str, Any]]] = {}
-        self._lock = threading.Lock()
+MAX_SIZES = 256
+"""Размеры кадра — пара чисел на файл. Предел щедрый, но конечный: без
+него словарь растёт с каждым новым сезоном и не чистится никогда."""
 
-    def get(self, key: str) -> dict[str, Any] | None:
-        with self._lock:
-            item = self._items.get(key)
-            if item is None:
-                return None
-            at, data = item
-            if time.time() - at > CACHE_TTL_S:
-                del self._items[key]
-                return None
-            return data
+CACHE: TTLCache[dict[str, Any]] = TTLCache(limit=MAX_PLAYLISTS, ttl_s=CACHE_TTL_S)
+"""Плейлисты по ключу «сайт + тайтл». Ограничены и по времени, и по числу:
+раньше TTL проверялся только при чтении, и ключи, к которым не вернулись,
+оседали в словаре навсегда."""
 
-    def put(self, key: str, data: dict[str, Any]) -> None:
-        with self._lock:
-            self._items[key] = (time.time(), data)
-
-
-CACHE = _PlaylistCache()
-
-
-class _SizeCache:
-    """Размеры кадра по файлам: имя поля + префикс адреса.
-
-    Зачем: проба — это GET на 256 КБ с каждого варианта, и шесть таких
-    подряд дают ощутимую паузу перед стартом. 1080p-файл у сериала один и
-    тот же, сколько раз его ни открывай, поэтому результат запоминается.
-    Ключ — имя поля и id файла из адреса: подпись в нём меняется, а id нет.
-    """
-
-    def __init__(self) -> None:
-        self._items: dict[str, tuple[int, int]] = {}
-        self._lock = threading.Lock()
-
-    @staticmethod
-    def key(field: str, url: str) -> str:
-        match = re.search(r"/id/(\d+)/", url)
-        file_id = match.group(1) if match else url.split("?", maxsplit=1)[0]
-        return f"{field}:{file_id}"
-
-    def get(self, key: str) -> tuple[int, int] | None:
-        with self._lock:
-            return self._items.get(key)
-
-    def put(self, key: str, size: tuple[int, int]) -> None:
-        with self._lock:
-            self._items[key] = size
-
-
-SIZES = _SizeCache()
+SIZES = SizeCache(limit=MAX_SIZES)
+"""Размеры кадра по файлам. Срока жизни нет: разрешение файла не меняется."""
 
 
 def voice_title(item: dict[str, Any]) -> str:
@@ -303,7 +262,7 @@ def qualities_from_video(video: dict[str, Any]) -> tuple[Quality, ...]:
     # 33 секунды перед стартом (замерено), параллельно — около 8.
     def probe(item: tuple[str, str]) -> tuple[str, str, tuple[int, int]]:
         field, url = item
-        key = SIZES.key(field, url)
+        key = file_key(field, url)
         known = SIZES.get(key)
         if known is not None:
             return field, url, known

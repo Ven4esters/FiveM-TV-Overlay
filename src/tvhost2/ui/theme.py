@@ -19,14 +19,9 @@ QSS = ASSETS / "style.qss"
 GAP_XS = 4
 GAP_S = 8
 GAP_M = 16
-RADIUS = 6
+
 
 # Шрифты: 14 основной, 12 подписи, 16-18 заголовки (правило проекта).
-FONT_BASE = 14
-FONT_SMALL = 12
-FONT_TITLE = 16
-
-
 def silence_style_warnings() -> None:
     """Убрать из консоли шум Qt «Could not parse stylesheet».
 

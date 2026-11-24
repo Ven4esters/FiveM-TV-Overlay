@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import shutil
-import sys
 from pathlib import Path
 
 _CACHE: dict[str, str | None] = {}
@@ -91,8 +90,3 @@ def version() -> str:
         return first.replace("ffmpeg version ", "")[:40] if first else "?"
     except (OSError, subprocess.SubprocessError, IndexError):
         return "?"
-
-
-def python_ok() -> bool:
-    """Заглушка для будущих проверок окружения (Python версии)."""
-    return sys.version_info >= (3, 10)

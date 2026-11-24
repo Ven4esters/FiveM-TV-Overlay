@@ -177,40 +177,6 @@ def fetch_text(
     return fetch(url, extra_headers, timeout).text()
 
 
-def probe_alive(
-    urls: list[str], headers: dict[str, str] | None = None, timeout: int = 6
-) -> set[str]:
-    """Какие ссылки РЕАЛЬНО отдают плейлист прямо сейчас.
-
-    Это лечит ERR-081 у корня: Kodik раздаёт качества с разных зеркал
-    (p12/p13/p14), и одно может не ответить на конкретный файл. Если такое
-    качество попадёт в master, плеер выберет его по битрейту и упадёт.
-
-    Проверка параллельная: три запроса по 6 с идут одновременно, поэтому
-    резолв замедляется максимум на 6 с (обычно — на доли секунды).
-
-    Пустой результат значит «проверить не удалось» — вызывающий код тогда
-    оставляет всё как есть: пустой список качеств хуже мёртвого зеркала.
-    """
-    if not urls:
-        return set()
-    from concurrent.futures import ThreadPoolExecutor  # noqa: PLC0415
-
-    def alive(url: str) -> bool:
-        try:
-            response = fetch(url, headers, timeout=timeout, max_bytes=1024)
-        except FetchError:
-            return False
-        return response.body.lstrip()[:7] == b"#EXTM3U"
-
-    with ThreadPoolExecutor(max_workers=len(urls)) as pool:
-        results = list(pool.map(alive, urls))
-    live = {url for url, ok in zip(urls, results, strict=True) if ok}
-    if live and len(live) < len(urls):
-        log.info("из %d ссылок живы %d — мёртвые убраны", len(urls), len(live))
-    return live
-
-
 def json_get(url: str, headers: dict[str, str] | None = None, timeout: int = TIMEOUT_S) -> Any:
     """JSON-ответ источника (Twitch GQL, API каталогов)."""
     import json  # noqa: PLC0415

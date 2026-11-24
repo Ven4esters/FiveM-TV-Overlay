@@ -35,7 +35,6 @@ from __future__ import annotations
 import logging
 import re
 import urllib.parse
-from typing import Any
 
 from ..core.errors import SourceFailedError
 from ..core.models import Quality, SourceState, Stream, StreamKind, sort_qualities
@@ -228,17 +227,3 @@ class AnidubSource:
             },
             state=self.state,
         )
-
-
-def _debug_dump(html: str) -> dict[str, Any]:
-    """Короткая сводка по странице — для журнала при разборе жалоб.
-
-    Не используется в обычном пути: только чтобы в отчёте о сбое было
-    видно, что мы вообще получили, а не «ошибка разбора».
-    """
-    return {
-        "length": len(html or ""),
-        "iframes": len(_IFRAME_RE.findall(html or "")),
-        "player_spans": len(_SPAN_RE.findall(html or "")),
-        "title": clean_title(html),
-    }

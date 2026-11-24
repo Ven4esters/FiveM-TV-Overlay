@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from ..core import registry
 from ..core.errors import OverlayError
-from ..core.models import Stream, StreamKind
+from ..core.models import Stream
 from ..sources import register_all
 from .fetch import FetchError
 
@@ -29,20 +29,6 @@ class Resolved:
 
     stream: Stream
     source_name: str
-
-    @property
-    def needs_browser(self) -> bool:
-        """Нужен ли браузер для воспроизведения (PAGE-поток)."""
-        return self.stream.kind is StreamKind.PAGE
-
-    @property
-    def has_own_master(self) -> bool:
-        """Источник отдаёт один плейлист со всеми качествами внутри.
-
-        Тогда мост просто переписывает ссылки. Если False — мост собирает
-        master сам из отдельных качеств (Kodik, Rutube, VK).
-        """
-        return len(self.stream.qualities) <= 1 and not self.stream.audio_url
 
 
 class ResolveError(Exception):
@@ -89,12 +75,6 @@ def _ask(source, url: str, translation_index: int | None, episode: int | None) -
 def ensure_registered() -> None:
     """Зарегистрировать источники один раз. Повторный вызов безопасен."""
     register_all()
-
-
-def find_source(url: str):
-    """Кто возьмётся за ссылку. None — ни один источник не узнал адрес."""
-    ensure_registered()
-    return registry.find(url)
 
 
 def resolve(

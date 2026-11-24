@@ -26,6 +26,18 @@ SESSION_TTL_S = 6 * 3600
 """Сессия живёт 6 часов: дольше — не смотрят один выпуск, а ссылки
 CDN всё равно протухают раньше."""
 
+MAX_SESSIONS = 64
+"""Сколько сессий держим одновременно.
+
+Замерено 24.11.2026: 25 000 сессий — это +10.6 МБ, и они живут ВСЕ шесть
+часов, потому что TTL считался только от `last_seen`. Человек открывает
+ролик, бросает, открывает следующий — и каждый остаётся в памяти, хотя к
+нему уже никто не вернётся: в пульте их видно пять, в игре играет одна.
+
+64 — с большим запасом над реальным использованием (пять «Недавних» плюс
+несколько с телевизоров). Старые вытесняются по времени последнего
+обращения: их ссылки на CDN к тому моменту всё равно мертвы."""
+
 
 @dataclass
 class Session:
@@ -185,11 +197,6 @@ class SessionStore:
             session.touch()
             return session
 
-    def delete(self, sid: str) -> None:
-        """Убрать сессию. Нужен тестам и «Остановить»: ссылки CDN всё равно мертвы."""
-        with self._lock:
-            self._items.pop(sid, None)
-
     def all(self) -> list[Session]:
         with self._lock:
             self._purge_locked()
@@ -200,9 +207,22 @@ class SessionStore:
             return self._items.pop(sid, None) is not None
 
     def _purge_locked(self) -> None:
+        """Убрать просроченные и лишние сессии. Вызывается под замком.
+
+        Два предела, а не один: TTL ловит «сессия старая», а лимит числа —
+        «сессий слишком много и они свежие». Без второго счётчик растёт
+        безгранично, потому что каждая новая сессия обновляет `last_seen`
+        только у себя.
+        """
         dead = [sid for sid, s in self._items.items() if s.expired]
         for sid in dead:
             del self._items[sid]
+        extra = len(self._items) - MAX_SESSIONS
+        if extra > 0:
+            # Самые давние по обращению — первыми: к ним уже не вернутся.
+            oldest = sorted(self._items.items(), key=lambda kv: kv[1].last_seen)
+            for sid, _session in oldest[:extra]:
+                del self._items[sid]
 
 
 STORE = SessionStore()

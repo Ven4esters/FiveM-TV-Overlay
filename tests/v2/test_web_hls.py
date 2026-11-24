@@ -230,7 +230,7 @@ class TestMasterUsesBridgeLinks:
             finally:
                 httpd.shutdown()
         finally:
-            server.STATE.sessions.delete(session.sid)
+            server.STATE.sessions.drop(session.sid)
 
         # Ссылка обязана быть обёрнута в мост. Внутри url= адрес источника
         # присутствует (закодированный) — это нормально и нужно мосту.
@@ -272,7 +272,7 @@ class TestMasterUsesBridgeLinks:
             finally:
                 httpd.shutdown()
         finally:
-            server.STATE.sessions.delete(session.sid)
+            server.STATE.sessions.drop(session.sid)
 
         assert "file://" not in master, f"file:// утёк в браузер:\n{master}"
         assert "/hls?url=" in master

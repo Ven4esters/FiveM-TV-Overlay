@@ -573,21 +573,6 @@ def translation_episodes(html: str) -> list[dict[str, Any]]:
     return tracks
 
 
-def all_urls(url: str, html: str) -> list[str]:
-    """Адреса всех серий, какие плеер показал в списке.
-
-    Нужны приложению, чтобы предложить «следующая серия», а не заставлять
-    человека искать ссылку заново.
-    """
-    ref = parse_player_url(url)
-    if ref is None:
-        return []
-    return [
-        f"https://{ref.host}/serial/{ep['id']}/{ep['hash']}/{ref.quality}"
-        for ep in parse_episodes(html)
-    ]
-
-
 def url_with_episode(url: str, number: int) -> str:
     """Та же ссылка, но с номером серии в параметре `?episode=N`.
 

@@ -24,9 +24,6 @@ from ..core.errors import RightsBlockedError
 from ..core.models import Quality, SourceState, Stream, StreamKind
 from .base import YtDlpSource, extract_info, pick_hls_qualities
 
-RU_COUNTRIES = {"RU", "BY", "KZ", "AM", "KG", "MD", "AZ", "GE", "UZ", "TJ"}
-"""Страны, для которых Rutube ограничивает показ реже всего."""
-
 log = logging.getLogger(__name__)
 
 _HASH_RE = re.compile(r"(?:video|embed)/([0-9a-f]{32})", re.IGNORECASE)

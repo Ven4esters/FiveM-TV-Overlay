@@ -39,6 +39,7 @@ import urllib.parse
 from dataclasses import replace
 from typing import Any
 
+from ..core.cache import TTLCache
 from ..core.errors import SourceFailedError
 from ..core.models import SourceState, Stream
 from ..web.fetch import FetchError, fetch_text
@@ -112,6 +113,15 @@ def is_embed_page(url: str) -> bool:
     return host_of(url) not in EMBED_HOSTS
 
 
+CACHE_LIMIT = 32
+"""Сколько страниц помним одновременно. Встройка — это ссылка на плеер
+плюс название, немного, но без предела словарь рос бы с каждой открытой
+страницей сайта и не чистился никогда."""
+
+CACHE_TTL_S = 600
+"""Через десять минут страницу перечитаем: адрес плеера у сайта меняется."""
+
+
 class KodikEmbedSource:
     """Страница любого сайта, внутри которой стоит плеер Kodik."""
 
@@ -126,15 +136,19 @@ class KodikEmbedSource:
 
     def __init__(self) -> None:
         self._inner = KodikSource()
-        self._titles: dict[str, str] = {}
+        self._titles: TTLCache[str] = TTLCache(limit=CACHE_LIMIT, ttl_s=CACHE_TTL_S)
         """Название страницы по адресу: плеер Kodik называет поток «Kodik»."""
 
-        self._cache: dict[str, str] = {}
+        self._cache: TTLCache[str] = TTLCache(limit=CACHE_LIMIT, ttl_s=CACHE_TTL_S)
         """Адрес встройки по адресу страницы.
 
         Зачем: переключение озвучки — это повторный `resolve`. Без кэша мы
         заново качали бы страницу сайта на каждую дорожку (сотни КБ на клик),
         хотя внутри страницы адрес плеера не меняется в течение сессии.
+
+        Предел обязателен и по времени: адрес плеера живёт не вечно, а
+        страницы сайтов открывают разные — без предела словарь рос бы с
+        каждой ссылкой и не чистился никогда.
         """
 
     # ---------------------------------------------------------------- поиск
@@ -160,8 +174,8 @@ class KodikEmbedSource:
             return None
         embed = find_embed(html)
         if embed:
-            self._cache[page_url] = embed
-            self._titles[page_url] = page_title(html)
+            self._cache.put(page_url, embed)
+            self._titles.put(page_url, page_title(html))
         return embed
 
     # --------------------------------------------------------------- разбор
