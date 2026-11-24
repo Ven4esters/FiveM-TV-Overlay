@@ -56,7 +56,35 @@ jobs:
         # покрытия. Раньше не было ни playwright в зависимостях, ни этого
         # разделения — pytest.importorskip() молча выбрасывал модуль,
         # покрытие падало с 79% до 69%, и CI краснел по непонятной причине.
-        run: pytest -m "not browser" --cov=src/tvhost2 --cov-report=term --cov-report=xml
+        # tee + continue-on-error: журнал выгружается артефактом, и причину
+        # падения видно без прав на логи Actions. Раньше узнать её было
+        # нечем — страница прогона требует входа, а API отдаёт 403.
+        run: |
+          set -o pipefail
+          pytest -m "not browser" --cov=src/tvhost2 --cov-report=term --cov-report=xml 2>&1 | tee pytest.log
+        continue-on-error: true
+
+      - name: Журнал тестов
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-log
+          path: pytest.log
+          retention-days: 7
+
+      - name: Итог тестов
+        # Падение переносим сюда: шаг выше всегда «успешен», чтобы журнал
+        # успел выгрузиться. Здесь возвращаем настоящий код ошибки.
+        if: always()
+        run: |
+          if grep -qE "[0-9]+ failed" pytest.log; then
+            echo "::error::тесты упали — смотрите артефакт pytest-log"
+            exit 1
+          fi
+          if grep -q "error" pytest.log && ! grep -qE "[0-9]+ passed" pytest.log; then
+            echo "::error::тесты не запустились — смотрите артефакт pytest-log"
+            exit 1
+          fi
 
       - name: Тесты воспроизведения (Chromium)
         # Живые проверки hls.js: играет ли видео и звук на самом деле.
