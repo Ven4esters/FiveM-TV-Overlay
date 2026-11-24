@@ -74,6 +74,10 @@ class Panel(QWidget):
         self.api = api or Api()
         self.sid = ""
         self.player_url = ""
+        self.subs_index = 0
+        """Текущая дорожка субтитров: 0 — выключены, N — включена N-я с нуля."""
+        self._subtitle_titles: list[str] = []
+        """Названия дорожек текущего видео — для подсказки при переключении."""
         self._last_err_key = ""
         self._tabs_built = False
 
@@ -441,6 +445,7 @@ class Panel(QWidget):
         self.btn_mute.clicked.connect(lambda: self._cmd("mute", True))
         self.btn_stop.clicked.connect(lambda: self._cmd("restart"))
         self.btn_full.clicked.connect(lambda: self._cmd("fullscreen", True))
+        self.btn_subs.clicked.connect(self._cycle_subtitles)
         self.volume.sliderMoved.connect(lambda v: self._cmd("volume", round(v / 100, 2)))
         self.seek.sliderMoved.connect(self._seek_moved)
         self.quality_box.currentIndexChanged.connect(self._quality_changed)
@@ -495,6 +500,10 @@ class Panel(QWidget):
             return
         self.player_url = player_url
         self.sid = sid
+        # Новое видео — субтитры прошлого не переносим.
+        self.subs_index = 0
+        self._subtitle_titles.clear()
+        self._mark_subs_button()
         self.output_url.setText(player_url)
         QApplication.clipboard().setText(player_url)
         self._set_remote_status("Пульт: ссылка скопирована — вставьте её в телевизор")
@@ -632,6 +641,11 @@ class Panel(QWidget):
             self._on_error(str(state["error"]))
             return
         self._fill_qualities([str(q) for q in state.get("qualities") or []])
+        # Субтитры: список приходит из /state. Пока он не пришёл, кнопка
+        # молча ничего не делает — поэтому обновляем его здесь же.
+        self._subtitle_titles = [str(t) for t in state.get("subtitles") or []]
+        if self.subs_index > len(self._subtitle_titles):
+            self.subs_index = 0
         playing = bool(state.get("playing"))
         self._set_remote_status(
             f"Пульт: {'играет' if playing else 'пауза'}  {_mmss(position)} / {_mmss(duration)}"
@@ -730,6 +744,34 @@ class Panel(QWidget):
         if text:
             self.journal.setPlainText(text)
             self.journal.verticalScrollBar().setValue(self.journal.verticalScrollBar().maximum())
+
+    def _cycle_subtitles(self) -> None:
+        """Переключить субтитры по кругу: выкл → дорожка 1 → 2 → … → выкл.
+
+        Почему по кругу, а не выпадающим списком: кнопка одна, дорожек
+        обычно одна-две. Список из одной строки выглядел бы абсурдно.
+        Когда дорожек нет вовсе, кнопка честно об этом говорит.
+        """
+        count = len(self._subtitle_titles)
+        if count == 0:
+            self._set_remote_status("У этого видео нет субтитров")
+            return
+        self.subs_index = (self.subs_index + 1) % (count + 1)
+        self._cmd("subs", self.subs_index)
+        # Кнопка подсвечивается, когда субтитры включены: иначе непонятно,
+        # сработало нажатие или нет — на пульте нет своего индикатора.
+        self._mark_subs_button()
+        if self.subs_index == 0:
+            self._set_remote_status("Субтитры выключены")
+        else:
+            name = self._subtitle_titles[self.subs_index - 1]
+            self._set_remote_status(f"Субтитры: {name}")
+
+    def _mark_subs_button(self) -> None:
+        """Подсветить кнопку субтитров, когда дорожка включена."""
+        self.btn_subs.setProperty("active", "true" if self.subs_index else "false")
+        self.btn_subs.style().unpolish(self.btn_subs)
+        self.btn_subs.style().polish(self.btn_subs)
 
     # ------------------------------------------------------------------
     #                              мелочи

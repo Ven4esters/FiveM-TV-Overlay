@@ -94,6 +94,12 @@ class Session:
             # Прямой эфир: у пульта пропадает перемотка и общий таймер —
             # у live нет ни длительности, ни позиции в привычном смысле.
             "isLive": bool(self.stream.is_live) if self.stream else False,
+            # Субтитры: пульт рисует кнопку «Субтитры» активной, только если
+            # дорожки есть. Пустой список — кнопка честно скажет «нет».
+            "subtitles": [
+                str(t.get("title") or t.get("lang") or "")
+                for t in (self.stream.subtitles if self.stream else ())
+            ],
         }
 
     @property

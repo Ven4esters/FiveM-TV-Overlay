@@ -191,11 +191,12 @@ class OverlayHandler(BaseHTTPRequestHandler):
             ("/state/", self._state),
             ("/loudness/", self._loudness),
             ("/static/", self._static),
+            ("/subs/", self._subtitle),
         )
         for prefix, method in prefixes:
             if path.startswith(prefix):
                 tail = path[len(prefix) :].strip("/")
-                if prefix in ("/cmd/",):
+                if prefix in ("/cmd/", "/subs/"):
                     return method(tail, query)
                 return method(tail)
         if path == "/new":
@@ -291,6 +292,33 @@ class OverlayHandler(BaseHTTPRequestHandler):
             session, self.proxy_base, f"{self.proxy_base}/static/{HLS_JS_NAME}"
         )
         self._send(200, page.encode(), "text/html; charset=utf-8")
+
+    def _subtitle(self, sid: str, query: dict[str, list[str]]) -> None:
+        """Одна дорожка субтитров через мост: `/subs/<sid>?i=0`.
+
+        Почему через прокси, а не прямой ссылкой: у YouTube субтитры отдаются
+        с токеном и требуют заголовков источника, а браузер игры может не
+        иметь доступа к чужому домену. К нашему адресу доступ есть всегда.
+        """
+        session = STATE.sessions.get(sid)
+        if session is None or session.stream is None:
+            return self._json(404, {"error": "сессия не найдена"})
+        tracks = session.stream.subtitles
+        if not tracks:
+            return self._json(404, {"error": "у потока нет субтитров"})
+        try:
+            index = int((query.get("i") or ["0"])[0])
+        except ValueError:
+            index = 0
+        if not 0 <= index < len(tracks):
+            return self._json(404, {"error": "нет такой дорожки"})
+        target = str(tracks[index].get("url") or "")
+        try:
+            response = fetch(target, _referer_headers(target), max_bytes=4 * 1024 * 1024)
+        except FetchError as exc:
+            return self._json(exc.status, {"error": exc.reason})
+        # VTT отдаём именно как VTT: браузер ждёт этот тип, иначе не покажет
+        return self._send(200, response.body, "text/vtt; charset=utf-8")
 
     def _state(self, sid: str) -> None:
         session = STATE.sessions.get(sid)

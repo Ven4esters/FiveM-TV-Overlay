@@ -87,6 +87,13 @@ def media(tmp_path_factory: pytest.TempPathFactory) -> Path:
         check=True,
         capture_output=True,
     )  # fmt: skip
+    # Субтитры: обычный WEBVTT, как отдаёт YouTube после конвертации.
+    (folder / "sub_ru.vtt").write_text(
+        "WEBVTT\n\n"
+        "00:00:01.000 --> 00:00:04.000\nПервая строка субтитров\n\n"
+        "00:00:05.000 --> 00:00:09.000\nВторая строка субтитров\n",
+        encoding="utf-8",
+    )
     return folder
 
 
@@ -122,6 +129,7 @@ def proxy(media: Path):  # noqa: ANN201
         audio_url=f"{base}/hls?url=file://{media}/audio.m3u8",
         duration_s=24,
         is_live=False,
+        subtitles=({"lang": "ru", "title": "Русские", "url": f"file://{media}/sub_ru.vtt"},),
     )
     yield base, session
     httpd.shutdown()
@@ -397,3 +405,91 @@ def test_mux_without_ffmpeg_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
 
     monkeypatch.setattr(mux.ffmpeg_bin, "find_ffmpeg", lambda: None)
     assert mux.muxed_for("file:///a.m3u8", "file:///b.m4a") is None
+
+
+def test_subtitles_load_and_switch(proxy) -> None:  # noqa: ANN001
+    """Субтитры: дорожки доезжают до браузера и включаются командой.
+
+    До этой правки кнопка «Субтитры» на пульте не была подключена ни к чему:
+    нажималась и молчала. Проверяем весь путь — тег <track> в странице,
+    загрузку VTT через мост, режим `showing` после команды и наличие
+    активной реплики (то есть текст реально виден, а не просто дорожка есть).
+    """
+    base, session = proxy
+    vtt = session.stream.subtitles[0]["url"] if session.stream.subtitles else ""
+    if not vtt:
+        pytest.skip("в фикстуре нет субтитров")
+    try:
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
+            page = browser.new_page()
+            page.goto(f"{base}/player/{session.sid}", wait_until="load")
+            page.evaluate("() => document.getElementById('bigplay').click()")
+            time.sleep(2.5)
+
+            count = page.evaluate("() => document.getElementById('v').textTracks.length")
+            assert count == 1, f"дорожек в браузере {count}, ждали 1"
+
+            import urllib.request
+
+            urllib.request.urlopen(  # noqa: S310 — свой локальный адрес
+                f"{base}/control/{session.sid}?cmd=subs&value=1", data=b""
+            )
+            time.sleep(2.5)
+
+            # Ставим позицию внутрь первой реплики (1–4 с): проверяем не
+            # «дорожка включена», а «текст виден в этот момент».
+            page.evaluate("() => { document.getElementById('v').currentTime = 2; }")
+            time.sleep(1.5)
+            state = page.evaluate(
+                """() => {
+                    const v = document.getElementById('v');
+                    const tr = v.textTracks[0];
+                    return {
+                        mode: tr.mode,
+                        cues: tr.activeCues ? tr.activeCues.length : 0,
+                        time: v.currentTime,
+                        total: tr.cues ? tr.cues.length : 0
+                    };
+                }"""
+            )
+            browser.close()
+    finally:
+        pass
+
+    assert state["mode"] == "showing", f"дорожка не включилась: {state}"
+    assert state["cues"] >= 1, f"реплика не показана: {state}"
+
+
+def test_subtitle_route_serves_vtt(proxy) -> None:  # noqa: ANN001
+    """Мост отдаёт субтитры с типом text/vtt — иначе браузер их не примет."""
+    import urllib.request
+
+    base, session = proxy
+    if not session.stream.subtitles:
+        pytest.skip("в фикстуре нет субтитров")
+    with urllib.request.urlopen(f"{base}/subs/{session.sid}?i=0", timeout=10) as response:  # noqa: S310
+        ctype = response.headers.get("Content-Type", "")
+        body = response.read().decode()
+    assert "text/vtt" in ctype, ctype
+    assert body.startswith("WEBVTT")
+
+
+def test_session_state_lists_subtitles(proxy) -> None:  # noqa: ANN001
+    """Пульт узнаёт названия дорожек из /state."""
+    from tvhost2.web.session import Session
+
+    session = Session(sid="abc", url="u")
+    session.stream = Stream(
+        source="YouTube",
+        title="",
+        kind=StreamKind.HLS,
+        subtitles=(
+            {"lang": "ru", "title": "Русские", "url": "file:///a"},
+            {"lang": "en", "title": "English", "url": "file:///b"},
+        ),
+    )
+    assert session.state()["subtitles"] == ["Русские", "English"]
+
+    session.stream = Stream(source="YouTube", title="", kind=StreamKind.HLS)
+    assert session.state()["subtitles"] == []

@@ -143,6 +143,14 @@ class Stream:
     (itag 233 у YouTube). Поэтому это штатный путь, а не аварийный.
     """
 
+    subtitles: tuple[dict[str, Any], ...] = ()
+    """Дорожки субтитров: [{"lang": "ru", "title": "Русские", "url": "…"}].
+
+    Обычно это WebVTT — браузер игры понимает его нативно через `<track>`.
+    У YouTube субтитры бывают и в других форматах, поэтому источник обязан
+    отдать ссылку на VTT: конвертацию делает он, а не плеер.
+    """
+
     state: SourceState = SourceState.OK
 
     def __post_init__(self) -> None:

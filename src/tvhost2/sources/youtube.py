@@ -138,6 +138,50 @@ class YouTubeSource(YtDlpSource):
                 return url
         return candidates[0][1] if candidates else ""
 
+    @staticmethod
+    def _subtitles(info: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+        """Дорожки субтитров в виде, понятном плееру.
+
+        yt-dlp отдаёт словарь язык → список вариантов, где каждый вариант —
+        либо WEBVTT, либо SRT/TTML. Берём только VTT: браузер игры понимает
+        его через `<track>` нативно, а конвертировать SRT на лету — лишний
+        код и лишний повод для ошибки на пустом месте.
+
+        Русский ставим первым: заказчик смотрит русскоязычные видео, и
+        именно эту дорожку он включит с вероятностью 90%.
+        """
+        found: list[dict[str, Any]] = []
+        subs = info.get("subtitles") or {}
+        if not isinstance(subs, dict):
+            return ()
+        for lang, variants in subs.items():
+            if not isinstance(variants, list):
+                continue
+            for variant in variants:
+                if str(variant.get("ext") or "").lower() != "vtt":
+                    continue
+                url = str(variant.get("url") or "")
+                if not url:
+                    continue
+                found.append(
+                    {
+                        "lang": str(lang),
+                        "title": str(variant.get("name") or lang),
+                        "url": url,
+                    }
+                )
+                break  # один вариант на язык: дубли в списке только мешают
+
+        def order(item: dict[str, Any]) -> tuple[int, str]:
+            lang = item["lang"]
+            if lang.startswith("ru"):
+                return (0, lang)
+            if lang.startswith("en"):
+                return (1, lang)
+            return (2, lang)
+
+        return tuple(sorted(found, key=order))
+
     def build_qualities(self, info: dict[str, Any]) -> tuple[Quality, ...]:
         found: list[Quality] = []
         for height, fmt in self._video_hls(info).items():
@@ -200,6 +244,7 @@ class YouTubeSource(YtDlpSource):
             # таймер и не пытается считать проценты.
             duration_s=0 if is_live else int(info.get("duration") or 0),
             is_live=is_live,
+            subtitles=self._subtitles(info),
             state=self.state,
         )
 

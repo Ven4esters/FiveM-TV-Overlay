@@ -238,6 +238,7 @@ SCRIPT = """
       case "mute":       v.muted = (val === true || val === "true" || val === 1); break;
       case "normalize":  setNormalize(val === true || val === "true" || val === 1); break;
       case "quality":    setQuality(Number(val)); break;
+      case "subs":       setSubtitles(Number(val)); break;
       case "trans":      pickTranslation(Number(val)); break;
       case "restart":    v.currentTime = 0; startPlayback(); break;
       case "fullscreen":
@@ -269,6 +270,29 @@ SCRIPT = """
     if (best >= 0) hls.currentLevel = best;
   }
 
+  // Субтитры: дорожки лежат в <track>, переключаем активную.
+  // val = 0 — выключить, val = N — включить дорожку N-1 (с нуля у пульта).
+  function setSubtitles(index) {
+    var tracks = v.textTracks;
+    for (var i = 0; i < tracks.length; i++) {
+      tracks[i].mode = (index > 0 && i === index - 1) ? "showing" : "disabled";
+    }
+    if (index > 0) {
+      var name = tracks[index - 1] ? (tracks[index - 1].label || "Субтитры") : "Субтитры";
+      toast(name);
+    } else {
+      toast("Субтитры выключены");
+    }
+    // запоминаем выбор: после перезагрузки страницы вернём его же
+    try { localStorage.setItem("subs_" + SID, String(index)); } catch (e) {}
+  }
+
+  function restoreSubtitles() {
+    var saved = 0;
+    try { saved = Number(localStorage.getItem("subs_" + SID) || 0); } catch (e) {}
+    if (saved > 0) setTimeout(function () { setSubtitles(saved); }, 500);
+  }
+
   function pickTranslation(index) {
     // У Kodik озвучка — отдельный поток со своим hash. Смена озвучки =
     // новая сессия на стороне прокси, страница просто перезагружается.
@@ -297,6 +321,7 @@ SCRIPT = """
         muted: v.muted,
         playing: !v.paused && !v.ended && v.readyState > 2,
         levels: levels,
+        subtitles: v.textTracks ? v.textTracks.length : 0,
         level: hls && hls.currentLevel >= 0 ? (hls.levels[hls.currentLevel].height || 0) : 0
       })
     }).catch(function () {});
@@ -324,6 +349,7 @@ SCRIPT = """
   });
 
   attach();
+  restoreSubtitles();
   setInterval(poll, 250);
   setInterval(report, 2000);
   report();
@@ -338,6 +364,7 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
     всё остальное, поэтому игре не нужно знать ничего, кроме этого адреса.
     """
     title = html.escape(session.title or "Видео")
+    tracks = _tracks(session, base)
     script = (
         SCRIPT.replace("__SID__", _js(session.sid))
         .replace("__BASE__", _js(base))
@@ -354,7 +381,7 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
 </head>
 <body>
 <div id="wrap">
-  <video id="v" playsinline preload="auto"></video>
+  <video id="v" playsinline preload="auto">{tracks}</video>
   <button id="bigplay" type="button" aria-label="Запустить">{PLAY_ICON}</button>
   <div id="toast"></div>
   <div id="err"></div>
@@ -364,6 +391,27 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
 </body>
 </html>
 """
+
+
+def _tracks(session: Session, base: str) -> str:
+    """Теги <track> для всех дорожек субтитров.
+
+    Все дорожки сразу в странице, но выключены: включение — команда `subs`.
+    Так переключение мгновенное и не требует перезагрузки, а страница не
+    ходит к источнику за каждой дорожкой.
+    """
+    stream = session.stream
+    if stream is None or not stream.subtitles:
+        return ""
+    parts: list[str] = []
+    for index, track in enumerate(stream.subtitles):
+        lang = html.escape(str(track.get("lang") or "und"))
+        label = html.escape(str(track.get("title") or lang))
+        src = f"{base}/subs/{urllib.parse.quote(session.sid)}?i={index}"
+        parts.append(
+            f'<track kind="subtitles" src="{html.escape(src)}" srclang="{lang}" label="{label}">'
+        )
+    return "".join(parts)
 
 
 def _js(value: str) -> str:
