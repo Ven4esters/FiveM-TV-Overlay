@@ -747,6 +747,24 @@ def _ref_values(from_page: str) -> list[str]:
     return values[:3]
 
 
+def curl_files() -> list[Path]:
+    """Все файлы с «Copy as cURL» в папке отчётов, свежие первыми.
+
+    Имя не фиксировано: браузер предлагает сохранить как `curl.txt`, но
+    человек часто кладёт `curl-2.txt`, `curl (1).txt` и подобное. Раньше
+    читался только `curl.txt`, и свежий запрос молча не подхватывался.
+    """
+    if not CHECK_DIR.is_dir():
+        return []
+    found = [
+        path
+        for path in CHECK_DIR.iterdir()
+        if path.is_file() and path.suffix.lower() == ".txt" and path.name.lower().startswith("curl")
+    ]
+    found.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    return found
+
+
 def learnt_borths() -> list[str]:
     """Настоящие `Borth` из нашего же `curl.txt` — с машины заказчика.
 
@@ -763,10 +781,7 @@ def learnt_borths() -> list[str]:
     можно взять готовым из `curl.txt`: там он настоящий и рабочий.
     """
     found: list[str] = []
-    for name in ("curl.txt", "curl", "bnsi.txt"):
-        path = CHECK_DIR / name
-        if not path.is_file():
-            continue
+    for path in curl_files():
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -789,10 +804,7 @@ def learnt_ref_tokens() -> list[str]:
     нужен: без него `/bnsi` может отвечать 404 так же, как нам.
     """
     found: list[str] = []
-    for name in ("curl.txt", "curl", "bnsi.txt"):
-        path = CHECK_DIR / name
-        if not path.is_file():
-            continue
+    for path in curl_files():
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:

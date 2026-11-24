@@ -736,3 +736,40 @@ class TestBrowserTruth:
         empty.mkdir()
         monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", empty)
         assert alloha_bnsi.learnt_borths() == []
+
+
+class TestCurlFilesDiscovery:
+    """Имя файла с запросом не фиксировано: curl.txt, curl-2.txt, curl (1).txt…"""
+
+    def test_newest_first(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        import os
+        import time
+
+        folder = tmp_path / "alloha_check"
+        folder.mkdir()
+        old = folder / "curl.txt"
+        old.write_text("curl 'https://x/bnsi/movies/1'", encoding="utf-8")
+        time.sleep(0.01)
+        new = folder / "curl-2.txt"
+        new.write_text("curl 'https://x/bnsi/movies/2'", encoding="utf-8")
+        os.utime(old, (1, 1))
+        os.utime(new, (2, 2))
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
+        assert [p.name for p in alloha_bnsi.curl_files()] == ["curl-2.txt", "curl.txt"]
+
+    def test_only_txt_and_only_curl(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        folder = tmp_path / "alloha_check"
+        folder.mkdir()
+        (folder / "curl-2.txt").write_text("x", encoding="utf-8")
+        (folder / "bnsi.txt").write_text("x", encoding="utf-8")
+        (folder / "заметки.md").write_text("x", encoding="utf-8")
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
+        assert [p.name for p in alloha_bnsi.curl_files()] == ["curl-2.txt"]
+
+    def test_empty_folder(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        empty = tmp_path / "nothing"
+        empty.mkdir()
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", empty)
+        assert alloha_bnsi.curl_files() == []
+        assert alloha_bnsi.learnt_borths() == []
+        assert alloha_bnsi.learnt_ref_tokens() == []

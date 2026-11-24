@@ -34,29 +34,38 @@ if defined PY goto HAVE_PY
 goto NO_PY
 :HAVE_PY
 
-if not exist "alloha_check\curl.txt" (
+REM --- Ищем любой файл с командой: curl.txt, curl-2.txt, bnsi.txt и т.п. ---
+set "CURLFILE="
+if exist "alloha_check\curl.txt" set "CURLFILE=alloha_check\curl.txt"
+if not defined CURLFILE (
+    for %%F in ("alloha_check\curl*.txt") do (
+        if not defined CURLFILE set "CURLFILE=%%~fF"
+    )
+)
+if not defined CURLFILE (
     echo.
-    echo [НУЖЕН ФАЙЛ] alloha_check\curl.txt
+    echo [НУЖЕН ФАЙЛ] Положите "Copy as cURL" в папку alloha_check.
+    echo Имя может быть любым: curl.txt, curl-2.txt и так далее.
     echo.
     echo 1. Откройте страницу с видео, дождитесь, пока плеер начнёт играть.
     echo 2. F12 - вкладка Network - в фильтре наберите: bnsi
     echo 3. Правой кнопкой по запросу bnsi - Copy - Copy as cURL
-    echo 4. Откройте Блокнот, вставьте, сохраните как:
-    echo       alloha_check\curl.txt
+    echo 4. Блокнот, вставить, сохранить в папку alloha_check
     echo 5. Запустите этот файл снова.
     echo.
     pause
     exit /b 1
 )
+echo Файл с запросом: %CURLFILE%
 
 echo.
 echo ============================================================
-echo   Повторяю запрос из alloha_check\curl.txt
+echo   Повторяю запрос из %CURLFILE%
 echo ============================================================
 echo.
 
 set "PYTHONPATH=%~dp0src"
-"%PY%" -m tvhost2.alloha_replay "alloha_check\curl.txt"
+"%PY%" -m tvhost2.alloha_replay "%CURLFILE%"
 set "RESULT=%errorlevel%"
 
 echo.

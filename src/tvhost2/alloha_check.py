@@ -61,6 +61,14 @@ def pick_embed(info: dict[str, Any], tracks: list[dict[str, str]], page_url: str
     return next((url for url in candidates if url), "")
 
 
+BUILD = "2026-11-25 · id_file+Borth из curl"
+"""Метка сборки: первая строка отчёта. По ней видно, обновился ли код.
+
+Зачем: прогон 25.11 00:0x шёл ещё на старом коде (перебор начинался с
+`1847894`, хотя браузер просит `1836464`), и по отчёту это было незаметно.
+"""
+
+
 def _line(title: str) -> None:
     print(f"\n── {title} " + "─" * max(0, 60 - len(title)))
 
@@ -125,7 +133,20 @@ def _player_block(report: Report, embed: str, page_url: str) -> tuple[str, list[
     ids = alloha_bnsi.file_ids(player)
     report.say(f"файлов в fileList: {len(ids)} → {', '.join(ids[:6]) or '—'}")
     report.say(f"тип: {alloha_bnsi.kind_of(player)}")
-    report.say(f"Borth собран: {len(alloha_bnsi.borth_for(player))} символов")
+    learnt = alloha_bnsi.learnt_borths()
+    if learnt:
+        report.say(
+            f"Borth: ВЗЯТ ИЗ curl.txt — {len(learnt[0])} символов (браузерный, настоящий)"
+        )
+    else:
+        size = len(alloha_bnsi.borth_for(player))
+        report.say(f"Borth собран: {size} символов (из UA — сервер может не принять)")
+    report.say(f"пойдут номера: {', '.join(ids[:6])}")
+    first = ids[0] if ids else ""
+    report.say(
+        "первым — id_file активного файла (его просит браузер): "
+        + (first if first else "НЕ НАЙДЕН")
+    )
     return player, ids
 
 
@@ -226,6 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Отчёты складываю в: {OUT}")
     stamp = time.strftime("%Y%m%d-%H%M%S")
     report = Report(stamp)
+    report.say(f"сборка: {BUILD}")
     report.say(f"страница: {page_url}")
     report.say("")
 
