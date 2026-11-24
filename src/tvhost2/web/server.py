@@ -634,30 +634,9 @@ def _ffmpeg_exe() -> str | None:
     return find_ffmpeg()
 
 
-_ALLOHA_PLAYER_ORIGIN = "https://tories-as.stravers.live"
-"""Домен плеера Alloha — то, что требует его CDN.
-
-Почему константа, а не разбор из адреса: `Origin` обязан совпадать с доменом
-ПЛЕЕРА, а не CDN (`userplay.live`) и не сайта (`zlord.org`) — оба дают 403.
-Когда Alloha сменит зеркало, менять здесь.
-"""
-
-
 def _referer_headers(url: str) -> dict[str, str]:
     """Referer под источник. Kodik подписывает запросы под домен-партнёр."""
     low = url.lower()
-    if "userplay.live" in low:
-        # CDN Alloha. Проверено живьём 24.11.2026 по HAR заказчика и
-        # перебором по одному заголовку:
-        #   только User-Agent        → 403
-        #   только Origin (без UA)   → 200
-        #   Origin + испорченный путь → 403
-        # Значит нужен ровно Origin домена плеера, и ничего больше:
-        # ни Accepts-Controls, ни Authorizations, ни Referer, ни cookies не
-        # проверяются. Домен плеера у Alloha — единственное, что бывает разным
-        # (`tories-as.stravers.live`, `tories.as.newplayjj.com`); здесь именно
-        # он, поэтому правило не может опираться на хост CDN.
-        return {"Origin": _ALLOHA_PLAYER_ORIGIN}
     if "solodcdn" in low or "kodik" in low:
         return {"Referer": "https://kodikplayer.com/", "Origin": "https://kodikplayer.com"}
     if "rutube" in low or "rtbcdn" in low:

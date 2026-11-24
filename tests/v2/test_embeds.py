@@ -11,7 +11,7 @@
    `data-src` ленивого iframe.
 
 3. **old.yummyani.me** — поддерживается через открытый API, но только там,
-   где сайт отдаёт Kodik. Плееры Alloha и CVH — честный отказ.
+   где сайт отдаёт Kodik. Прочие плееры сайта — честный отказ.
 
 Плюс отдельный тест на баг, который стоил часа: у сериалов Kodik хэш в
 адресе iframe подменяется, настоящие `type/hash/id` лежат в `vInfo`.
@@ -111,8 +111,8 @@ YUMMY_JSON = {
         },
         {
             "number": 1,
-            "data": {"player": "Плеер Alloha", "dubbing": "Озвучка StudioBand"},
-            "iframe_url": "//alloha.yani.tv/?token_movie=1",
+            "data": {"player": "Плеер CVH", "dubbing": "Озвучка StudioBand"},
+            "iframe_url": "//ru.yummyani.me/iframeCVH.html?token_movie=1",
         },
         {
             "number": 2,
@@ -131,9 +131,9 @@ class TestYummyParsing:
         assert all("aaa" in t["iframe"] or "bbb" in t["iframe"] for t in tracks)
 
     def test_skips_other_players(self):
-        """Alloha не наш: он и регионально закрыт, и токены у него свои."""
+        """Чужие плееры не наши: у них свои токены и свой разбор."""
         tracks = yummy.kodik_embeds(YUMMY_JSON)
-        assert not any("alloha" in t["iframe"] for t in tracks)
+        assert not any("iframecvh" in t["iframe"].lower() for t in tracks)
 
     def test_keeps_site_order(self):
         """Порядок как на сайте: человек видит тот же список, что в браузере."""
@@ -176,7 +176,7 @@ class TestYummyParsing:
 
 class TestYummyPlayers:
     def test_player_names(self):
-        assert yummy.players_present(YUMMY_JSON) == {"Kodik", "Alloha"}
+        assert yummy.players_present(YUMMY_JSON) == {"Kodik", "CVH"}
 
     def test_broken_json(self):
         assert yummy.players_present({"нет": "ответа"}) == set()
@@ -194,11 +194,7 @@ class TestMessages:
         from tvhost2.core.errors import SourceFailedError
 
         source = yummy.YummyAnimeSource()
-        source._players["https://old.yummyani.me/catalog/item/x"] = {"Alloha"}
+        source._players["https://old.yummyani.me/catalog/item/x"] = {"CVH"}
         with pytest.raises(SourceFailedError) as caught:
             source.resolve("https://old.yummyani.me/catalog/item/x")
-        assert "Alloha" in str(caught.value)
-
-    def test_region_blocked_helper(self):
-        assert yummy.region_blocked("https://alloha.yani.tv/?token=1")
-        assert not yummy.region_blocked("https://kodikplayer.com/x")
+        assert "CVH" in str(caught.value)

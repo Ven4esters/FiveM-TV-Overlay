@@ -26,7 +26,6 @@ videos/overlay_history.json
 cache/
 logs/
 diag/
-alloha_check/
 
 # Сборки и архивы
 *.zip
