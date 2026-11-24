@@ -55,9 +55,121 @@ video { width: 100%; height: 100%; object-fit: contain; background: #000; displa
 }
 #err b { color: #F87171; }
 #err small { color: #6E7689; }
+
+/* ---------- панель управления ----------
+   Зачем она в CEF: в игре нет ни клавиатуры, ни системных кнопок браузера.
+   Без своих элементов человек получает картинку без паузы и перемотки —
+   в v1 они были, в v2 потерялись при переписывании.
+
+   Панель всплывает по движению мыши и прячется через 2.5 с, чтобы не
+   закрывать кино. Пока курсор над ней или идёт перетаскивание полосы —
+   не прячется. */
+#ui {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 10px 16px 12px;
+  background: linear-gradient(to top, #0B0E14F2 0%, #0B0E14C0 60%, #0B0E1400 100%);
+  opacity: 0; transform: translateY(6px); transition: opacity .18s, transform .18s;
+  pointer-events: none;
+}
+/* pointer-events: auto ставится на САМУ панель, а не наследуется:
+   без этого видео под ней перехватывает клики (проверено в Chromium —
+   Playwright честно сказал «video intercepts pointer events»), и в игре
+   кнопки были бы недоступны вовсе. */
+#ui.on { opacity: 1; transform: none; pointer-events: auto; }
+#ui.on * { pointer-events: auto; }
+#ui.hidden { display: none; }
+
+/* полоса перемотки: тонкая, но с широкой зоной захвата — в игре мышью
+   попасть в 4 пикселя невозможно */
+#bar { position: relative; height: 18px; cursor: pointer; margin-bottom: 2px; }
+#bar::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 6px; height: 6px;
+  /* Тёмная кайма обязательна: светлые кадры (небо, снег, вспышки) иначе
+     съедают полосу целиком — проверено скриншотом, её не было видно. */
+  background: #39404F; border-radius: 3px; box-shadow: 0 0 0 1px #0B0E1480;
+}
+#buffered {
+  position: absolute; left: 0; top: 6px; height: 6px; width: 0;
+  background: #5A6478; border-radius: 3px;
+}
+#played {
+  position: absolute; left: 0; top: 6px; height: 6px; width: 0;
+  background: #4D8DFF; border-radius: 3px;
+}
+#knob {
+  position: absolute; top: 3px; width: 14px; height: 14px; margin-left: -7px;
+  background: #E8E8EE; border-radius: 50%; box-shadow: 0 0 0 2px #0B0E14;
+}
+#bar.live #played, #bar.live #knob { display: none; }
+#bar.live::after {
+  content: "ПРЯМОЙ ЭФИР"; position: absolute; left: 0; top: -2px;
+  font-size: 11px; letter-spacing: .06em; color: #F87171;
+}
+
+#row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+#row .btn {
+  position: relative; width: 34px; height: 30px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 0; border-radius: 6px;
+  color: #CBD2E4; cursor: pointer; padding: 0;
+}
+#row .btn:hover { background: #2A2E38; color: #4D8DFF; }
+#row .btn svg { width: 20px; height: 20px; fill: currentColor; }
+#time { font-variant-numeric: tabular-nums; color: #9AA0B4; white-space: nowrap; }
+#time b { color: #CBD2E4; font-weight: 600; }
+#spacer { flex: 1 1 auto; }
+
+/* громкость: иконка + ползунок, ползунок раскрывается при наведении */
+#volwrap { display: flex; align-items: center; gap: 6px; }
+#vol { width: 0; opacity: 0; transition: width .15s, opacity .15s; }
+#volwrap:hover #vol, #vol:focus { width: 80px; opacity: 1; }
+#vol, input[type=range] { -webkit-appearance: none; appearance: none; height: 4px;
+  background: #39404F; border-radius: 2px; outline: none; }
+#vol::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px;
+  border-radius: 50%; background: #4D8DFF; cursor: pointer; }
+
+/* CEF внутри GTA 5 не всегда умеет Fullscreen API. Тогда полноэкранный
+   режим — это класс clean: панель убирается, курсор скрывается, картинка
+   на весь экран. Без этих правил кнопка «на весь экран» в игре не давала
+   бы ничего. */
+body.clean #ui { display: none; }
+body.clean #wrap { cursor: none; }
+
+#badge {
+  position: absolute; right: 16px; top: 14px; padding: 4px 9px;
+  background: #0B0E14C0; border: 1px solid #39404F; border-radius: 4px;
+  font-size: 12px; color: #9AA0B4; opacity: 0; transition: opacity .5s;
+}
+#badge.on { opacity: 1; }
 """
 
 PLAY_ICON = '<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>'
+PAUSE_ICON = '<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>'
+BACK_ICON = (
+    '<svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7a5 5 0 1 1-5 5H5a7 7 0 1 0 7-7z"/></svg>'
+)
+FWD_ICON = (
+    '<svg viewBox="0 0 24 24"><path d="M12 5V1l5 5-5 5V7a5 5 0 1 0 5 5h2a7 7 0 1 1-7-7z"/></svg>'
+)
+VOL_ICON = (
+    '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 4V5L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8'
+    'a4.5 4.5 0 0 0 2.5-4zM14 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z"/></svg>'
+)
+MUTE_ICON = (
+    '<svg viewBox="0 0 24 24"><path d="M3 9v6h4l5 4V5L7 9H3zm13.6 3 2.7-2.7-1.4-1.4L15.2 10.6 '
+    '12.5 7.9l-1.4 1.4 2.7 2.7-2.7 2.7 1.4 1.4 2.7-2.7 2.7 2.7 1.4-1.4-2.7-2.7z"/></svg>'
+)
+FULL_ICON = (
+    '<svg viewBox="0 0 24 24"><path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4z'
+    'M4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z"/></svg>'
+)
+
+SKIP_BACK_S = 10
+"""Сколько секунд отматывает кнопка назад. 10 — привычно для телевизора
+и удобно пальцем на тачпаде; 5 слишком мало, 30 слишком грубо."""
+
+SKIP_FWD_S = 10
+"""Столько же вперёд. Симметрия: человек запоминает одно число."""
 
 # Скрипт страницы. Подставляются только SID и BASE — остальное статично.
 SCRIPT = """
@@ -304,6 +416,187 @@ SCRIPT = """
       .catch(function () { toast("Не удалось сменить озвучку"); });
   }
 
+  // ---------------- панель управления ----------------
+  // В игре нет ни клавиатуры, ни браузерных кнопок: всё, что можно сделать
+  // с видео, должно быть здесь. Панель всплывает по движению мыши, прячется
+  // сама через 2.5 с, но не прячется, пока на ней курсор или пока тянут
+  // полосу перемотки.
+  var ui = document.getElementById("ui");
+  var bar = document.getElementById("bar");
+  var played = document.getElementById("played");
+  var buffered = document.getElementById("buffered");
+  var knob = document.getElementById("knob");
+  var timeEl = document.getElementById("time");
+  var playBtn = document.getElementById("b-play");
+  var muteBtn = document.getElementById("b-mute");
+  var volInput = document.getElementById("vol");
+  var badge = document.getElementById("badge");
+  // Иконки берутся из скрытых <template>, а не подстановкой в текст скрипта:
+  // SVG внутри содержит двойные кавычки, и в JS-литерале "…" он рвёт строку
+  // (проверено: SyntaxError «Unexpected number», панель молча не работала).
+  var ICONS = {};
+  (function () {
+    var nodes = document.querySelectorAll("template[data-icon]");
+    for (var i = 0; i < nodes.length; i++) {
+      ICONS[nodes[i].getAttribute("data-icon")] = nodes[i].innerHTML;
+    }
+  })();
+  var hideTimer = null;
+  var hovering = false;
+  var dragging = false;
+
+  if (LIVE) { bar.classList.add("live"); }
+
+  function fmt(sec) {
+    if (!isFinite(sec) || sec < 0) sec = 0;
+    var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s2 = Math.floor(sec % 60);
+    var mm = (h && m < 10 ? "0" : "") + m;
+    var ss = (s2 < 10 ? "0" : "") + s2;
+    return h ? (h + ":" + mm + ":" + ss) : (m + ":" + ss);
+  }
+
+  function showUI() {
+    ui.classList.add("on");
+    clearTimeout(hideTimer);
+    if (hovering || dragging) return;
+    hideTimer = setTimeout(function () {
+      if (!hovering && !dragging && !v.paused) ui.classList.remove("on");
+    }, 2500);
+  }
+
+  // Движение мыши — единственный надёжный признак «человек рядом».
+  // Пауза или наведение на панель держат её открытой.
+  document.addEventListener("mousemove", showUI);
+  ui.addEventListener("mouseenter", function () { hovering = true; showUI(); });
+  ui.addEventListener("mouseleave", function () { hovering = false; showUI(); });
+  v.addEventListener("pause", function () { showUI(); });
+  v.addEventListener("play", function () { showUI(); });
+
+  function paint() {
+    var dur = LIVE ? 0 : (isFinite(v.duration) ? v.duration : 0);
+    var pct = dur ? Math.min(100, (v.currentTime / dur) * 100) : 0;
+    played.style.width = pct + "%";
+    knob.style.left = pct + "%";
+    bar.setAttribute("aria-valuenow", String(Math.round(pct)));
+    if (!LIVE) {
+      timeEl.innerHTML = "<b>" + fmt(v.currentTime) + "</b> / " + fmt(dur);
+    } else {
+      timeEl.innerHTML = "<b>" + fmt(v.currentTime) + "</b>";
+    }
+    var buf = 0;
+    try {
+      for (var i = 0; i < v.buffered.length; i++) {
+        if (v.buffered.start(i) <= v.currentTime && v.currentTime <= v.buffered.end(i)) {
+          buf = v.buffered.end(i); break;
+        }
+      }
+    } catch (e) {}
+    buffered.style.width = (dur ? Math.min(100, (buf / dur) * 100) : 0) + "%";
+    playBtn.innerHTML = v.paused ? ICONS.play : ICONS.pause;
+    muteBtn.innerHTML = (v.muted || v.volume === 0) ? ICONS.mute : ICONS.vol;
+    if (!dragging) volInput.value = String(Math.round((v.muted ? 0 : v.volume) * 100));
+  }
+
+  setInterval(paint, 250);
+  v.addEventListener("timeupdate", paint);
+  v.addEventListener("loadedmetadata", paint);
+
+  // ---- перемотка ----
+  function seekToClientX(clientX) {
+    var rect = bar.getBoundingClientRect();
+    if (!rect.width) return;
+    var ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    if (LIVE) { toast("В прямом эфире перемотки нет"); return; }
+    var dur = isFinite(v.duration) ? v.duration : 0;
+    if (dur) v.currentTime = ratio * dur;
+    paint();
+    badge.textContent = fmt(ratio * dur);
+    badge.classList.add("on");
+  }
+
+  bar.addEventListener("mousedown", function (e) {
+    if (LIVE) { toast("В прямом эфире перемотки нет"); return; }
+    dragging = true; showUI(); seekToClientX(e.clientX);
+    // Слушатели на document, а не на полосе: если увести курсор за её
+    // пределы, перетаскивание не должно обрываться — все так делают.
+    function onMove(ev) { seekToClientX(ev.clientX); }
+    function onUp() {
+      dragging = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      setTimeout(function () { badge.classList.remove("on"); }, 600);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+
+  // ---- кнопки ----
+  function actBack() { if (LIVE) { toast("В прямом эфире перемотки нет"); return; }
+    v.currentTime = Math.max(0, v.currentTime - __BACK__); showUI(); }
+  function actFwd() { if (LIVE) { toast("В прямом эфире перемотки нет"); return; }
+    var dur = isFinite(v.duration) ? v.duration : 1e9;
+    v.currentTime = Math.min(dur, v.currentTime + __FWD__); showUI(); }
+
+  function actToggle() {
+    if (v.paused) { v.muted = false; startPlayback(); } else { v.pause(); }
+    showUI();
+  }
+
+  function actMute() {
+    v.muted = !v.muted;
+    if (!v.muted && v.volume === 0) v.volume = 1;
+    paint();
+    toast(v.muted ? "Звук выключен" : "Звук включён");
+  }
+
+  function actFull() {
+    var want = !document.fullscreenElement && !document.body.classList.contains("clean");
+    if (want) {
+      var el = document.documentElement;
+      if (el.requestFullscreen) el.requestFullscreen().catch(function () {});
+      // CEF в игре не всегда поддерживает Fullscreen API: тогда «во весь
+      // экран» — это просто убрать панель и курсор.
+      document.body.classList.add("clean");
+    } else {
+      if (document.exitFullscreen) document.exitFullscreen().catch(function () {});
+      document.body.classList.remove("clean");
+    }
+    showUI();
+  }
+
+  ui.addEventListener("click", function (e) {
+    var btn = e.target.closest ? e.target.closest("[data-act]") : null;
+    if (!btn) return;
+    switch (btn.getAttribute("data-act")) {
+      case "toggle": actToggle(); break;
+      case "back":   actBack();   break;
+      case "fwd":    actFwd();    break;
+      case "mute":   actMute();   break;
+      case "full":   actFull();   break;
+    }
+  });
+
+  volInput.addEventListener("input", function () {
+    v.volume = Math.max(0, Math.min(1, Number(volInput.value) / 100));
+    v.muted = v.volume === 0;
+    paint();
+  });
+
+  // Клик по картинке — пауза. Так ведёт себя любой телевизор; при этом
+  // не срабатывает, если кликнули по самой панели.
+  v.addEventListener("click", function () { actToggle(); });
+
+  // Клавиатура: в CEF работает, если фокус на странице. Не мешает —
+  // в игре её просто нет, а при отладке в браузере удобно.
+  document.addEventListener("keydown", function (e) {
+    if (e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
+    if (e.code === "Space" || e.key === "k") { e.preventDefault(); actToggle(); }
+    else if (e.key === "ArrowLeft")  { e.preventDefault(); actBack(); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); actFwd(); }
+    else if (e.key === "f") { e.preventDefault(); actFull(); }
+    else if (e.key === "m") { e.preventDefault(); actMute(); }
+  });
+
   // ---------------- связь с прокси ----------------
   function report() {
     var levels = [];
@@ -369,9 +662,11 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
         SCRIPT.replace("__SID__", _js(session.sid))
         .replace("__BASE__", _js(base))
         .replace("__LIVE__", "true" if session.stream and session.stream.is_live else "false")
+        .replace("__BACK__", str(SKIP_BACK_S))
+        .replace("__FWD__", str(SKIP_FWD_S))
     )
     styles = BASE_CSS.replace("</", "<\\/")  # безопасность: не закрыть тег внутри
-    return f"""<!doctype html>
+    markup = f"""<!doctype html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
@@ -382,15 +677,58 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
 <body>
 <div id="wrap">
   <video id="v" playsinline preload="auto">{tracks}</video>
-  <button id="bigplay" type="button" aria-label="Запустить">{PLAY_ICON}</button>
+  <button id="bigplay" type="button" aria-label="Запустить">@PLAY@</button>
+  <!-- Иконки для JS: внутри скрипта SVG не поставить, кавычки рвут литерал -->
+  <template data-icon="play">@PLAY@</template>
+  <template data-icon="pause">@PAUSE@</template>
+  <template data-icon="mute">@MUTE@</template>
+  <template data-icon="vol">@VOL@</template>
+  <div id="badge"></div>
   <div id="toast"></div>
   <div id="err"></div>
+  <div id="ui" data-ui="panel">
+    <div id="bar" data-ui="bar" role="slider" tabindex="0"
+         aria-label="Перемотка" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div id="buffered"></div><div id="played"></div><div id="knob"></div>
+    </div>
+    <div id="row">
+      <button class="btn" id="b-play" data-act="toggle" type="button"
+              aria-label="Пауза или продолжить">@PAUSE@</button>
+      <button class="btn" id="b-back" data-act="back" type="button"
+              aria-label="Назад на {SKIP_BACK_S} секунд">@BACK@</button>
+      <button class="btn" id="b-fwd" data-act="fwd" type="button"
+              aria-label="Вперёд на {SKIP_FWD_S} секунд">@FWD@</button>
+      <span id="time"><b>0:00</b> / 0:00</span>
+      <span id="spacer"></span>
+      <div id="volwrap">
+        <button class="btn" id="b-mute" data-act="mute" type="button"
+                aria-label="Выключить звук">@VOL@</button>
+        <input id="vol" type="range" min="0" max="100" value="100" aria-label="Громкость">
+      </div>
+      <button class="btn" id="b-full" data-act="full" type="button"
+              aria-label="На весь экран">@FULL@</button>
+    </div>
+  </div>
 </div>
 <script src="{html.escape(hls_js_url)}"></script>
 <script>{script}</script>
 </body>
 </html>
 """
+    # Иконки подставляются отдельным проходом, а не в f-строке: внутри SVG
+    # есть фигурные скобки от стилей, и f-строка на них ломается. Один
+    # проход по словарю читается лучше, чем цепочка .replace().
+    for icon, value in (
+        ("@PLAY@", PLAY_ICON),
+        ("@PAUSE@", PAUSE_ICON),
+        ("@BACK@", BACK_ICON),
+        ("@FWD@", FWD_ICON),
+        ("@VOL@", VOL_ICON),
+        ("@MUTE@", MUTE_ICON),
+        ("@FULL@", FULL_ICON),
+    ):
+        markup = markup.replace(icon, value)
+    return markup
 
 
 def _tracks(session: Session, base: str) -> str:
