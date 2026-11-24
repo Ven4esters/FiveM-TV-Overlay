@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .. import APP_NAME, __version__
 from . import theme
 from .api import Api, ApiError
 
@@ -81,7 +82,7 @@ class Panel(QWidget):
         self._last_err_key = ""
         self._tabs_built = False
 
-        self.setWindowTitle("FiveM Video Overlay")
+        self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setWindowIcon(theme.icon("film"))
         self.setMinimumWidth(520)
 
