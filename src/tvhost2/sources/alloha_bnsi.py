@@ -247,6 +247,22 @@ def borth_for(player_html: str) -> str:
     return f"{first}|{suffix}"
 
 
+def _post_form(url: str, payload: dict[str, Any], headers: dict[str, str]) -> tuple[int, str]:
+    """POST как это делает jQuery: `application/x-www-form-urlencoded`.
+
+    В расшифровке плеер зовёт `Q5().ajax(..., {data: {...}})`, а jQuery по
+    умолчанию отправляет данные формой, не JSON. Значит основной вариант —
+    именно этот, а JSON — проверочный.
+    """
+    data = urllib.parse.urlencode(payload).encode()
+    request_headers = {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        **_common_headers(),
+        **headers,
+    }
+    return _raw_post(url, data, request_headers)
+
+
 def _post_json(url: str, payload: dict[str, Any], headers: dict[str, str]) -> tuple[int, str]:
     """POST с JSON-телом. Возвращает код и тело — тело нужно и при ошибке.
 
@@ -371,11 +387,19 @@ def attempts(embed: str, player_html: str) -> list[dict[str, Any]]:
     for ident in ids[:6]:
         url = bnsi_path(embed, kind, ident)
         headers = {"Borth": borth, "Referer": embed, "Origin": _origin_of(embed)}
-        status, body = _post_json(
+        # Сначала форма: так делает jQuery в самом плеере. JSON — вторым
+        # шагом, на случай если сервер принимает только его.
+        status, body = _post_form(
             url,
             {"token": _site_token(embed), "av1": 0, "autoplay": 0},
             headers,
         )
+        if status == HTTP_OK and not sources_of(body):
+            status, body = _post_json(
+                url,
+                {"token": _site_token(embed), "av1": 0, "autoplay": 0},
+                headers,
+            )
         result.append({"id": ident, "url": url, "status": status, "body": body})
         if status == HTTP_OK and sources_of(body):
             break
@@ -401,6 +425,154 @@ def fetch_sources(embed: str, player_html: str) -> tuple[str, list[dict[str, Any
             if sources:
                 return last_body, sources
     return last_body, []
+
+
+VARIANT_IDS = 2
+"""Сколько номеров пробовать на каждый вариант: первый (активный) и главный."""
+
+
+def try_variants(embed: str, player_html: str, ids: list[str] | None = None) -> list[dict]:
+    """Перебрать варианты запроса, пока один не вернёт `hlsSource`.
+
+    Зачем: заказчик прислал три отчёта, где на ВСЕ шесть номеров файла
+    приходит один и тот же «контент не найден». Номер исключён, регион
+    исключён (страница плеера приходит) — значит, Alloha сверяет что-то ещё
+    в самом запросе. Вместо угадывания по одному варианту за запуск
+    проверяем сразу все разумные:
+
+      * тело формой (так делает jQuery в плеере) или JSON;
+      * `av1`: 0, 1, «true»;
+      * `autoplay`: 0 и 1;
+      * `Borth` с отпечатком и без него;
+      * лишние поля (`audio`, `subtitle`, `_ref`);
+      * `X-Requested-With`, `Origin`, `Referer`.
+
+    Возвращает строки отчёта: `name`, `slug`, `id`, `status`, `body`, `ok`.
+    """
+    numbers = (ids or file_ids(player_html, embed))[:VARIANT_IDS]
+    if not numbers:
+        numbers = ["0"]
+    suffix = borth_suffix(meta_of(player_html)) if meta_of(player_html) else ""
+    fingerprint = hashlib.sha256(
+        "||".join([_DEFAULT_UA, "Europe/Moscow", "1920x1080", "ru-RU", "8", "8"]).encode()
+    ).hexdigest()
+    token = _site_token(embed)
+    origin = _origin_of(embed)
+    base_headers = {
+        "Origin": origin,
+        "Referer": embed,
+        "X-Requested-With": "XMLHttpRequest",
+    }
+
+    plans: list[tuple[str, str, dict, dict, bool]] = [
+        (
+            "форма (как jQuery), av1=0",
+            "form",
+            {"token": token, "av1": 0, "autoplay": 0},
+            {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+            True,
+        ),
+        (
+            "JSON, av1=0",
+            "json",
+            {"token": token, "av1": 0, "autoplay": 0},
+            {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+            False,
+        ),
+        (
+            "форма, av1=1",
+            "form",
+            {"token": token, "av1": 1, "autoplay": 0},
+            {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+            True,
+        ),
+        (
+            "форма, av1=true",
+            "form",
+            {"token": token, "av1": "true", "autoplay": 0},
+            {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+            True,
+        ),
+        (
+            "форма, autoplay=1",
+            "form",
+            {"token": token, "av1": 0, "autoplay": 1},
+            {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+            True,
+        ),
+        (
+            "форма, поле audio=93",
+            "form",
+            {"token": token, "av1": 0, "autoplay": 0, "audio": 93},
+            {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+            True,
+        ),
+        (
+            "форма, subtitle=0",
+            "form",
+            {"token": token, "av1": 0, "autoplay": 0, "subtitle": 0},
+            {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+            True,
+        ),
+        (
+            "форма, _ref пусто",
+            "form",
+            {"token": token, "av1": 0, "autoplay": 0, "_ref": ""},
+            {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+            True,
+        ),
+        (
+            "Borth без отпечатка",
+            "form",
+            {"token": token, "av1": 0, "autoplay": 0},
+            {**base_headers, "Borth": f"|{suffix}"},
+            True,
+        ),
+        ("без Borth", "form", {"token": token, "av1": 0, "autoplay": 0}, base_headers, True),
+        (
+            "без X-Requested-With",
+            "form",
+            {"token": token, "av1": 0, "autoplay": 0},
+            {"Origin": origin, "Referer": embed, "Borth": f"{fingerprint}|{suffix}"},
+            True,
+        ),
+        (
+            "JSON, только token",
+            "json",
+            {"token": token},
+            {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+            False,
+        ),
+    ]
+
+    result: list[dict] = []
+    for name, _encoding, payload, headers, is_form in plans:
+        for ident in numbers:
+            url = bnsi_path(embed, kind_of(player_html), ident)
+            if is_form:
+                status, body = _post_form(url, payload, headers)
+            else:
+                status, body = _post_json(url, payload, headers)
+            ok = "hlsSource" in (body or "")
+            result.append(
+                {
+                    "name": name,
+                    "slug": _slug(name),
+                    "id": ident,
+                    "status": status,
+                    "body": body,
+                    "ok": ok,
+                }
+            )
+            if ok:
+                return result
+    return result
+
+
+def _slug(name: str) -> str:
+    """Имя файла из названия варианта: без пробелов и знаков."""
+    keep = [ch.lower() if ch.isalnum() else "_" for ch in name]
+    return "".join(keep).strip("_")[:40]
 
 
 def _site_token(embed: str) -> str:

@@ -147,6 +147,25 @@ def main(argv: list[str] | None = None) -> int:
             say("ответ — «контент не найден»: это региональный отказ Alloha.")
         (OUT / f"{stamp}_bnsi_response.txt").write_text(body or "", encoding="utf-8")
 
+        _line("3б. Перебор вариантов запроса")
+        say("Обычный вариант не дал адресов — проверяю, не в запросе ли дело.")
+        variants = alloha_bnsi.try_variants(embed, player, ids)
+        for row in variants:
+            say(
+                f"   {row['name']:34s} id {row['id']} → {row['status']}"
+                + ("   ← ЕСТЬ hlsSource!" if row["ok"] else "")
+            )
+            if row["ok"]:
+                name = f"{stamp}_variant_{row['slug']}.json"
+                (OUT / name).write_text(row["body"], encoding="utf-8")
+                say(f"   рабочий вариант сохранён: {name}")
+                say(f"   ВАЖНО: сообщите название варианта — «{row['name']}»")
+                _save(stamp, report)
+                _line("ИТОГ")
+                say("поток получен перебором — пришлите summary.txt и json.")
+                return 0
+        say("ни один вариант не подошёл: значит дело не в теле и не в заголовках.")
+
     _line("4. Что это значит")
     say(
         "Если на шаге 2 страница плеера не пришла — Alloha закрывает по региону, "
