@@ -473,3 +473,82 @@ class TestReplayFidelity:
         captured = alloha_replay.parse_curl(alloha_replay._read_text(path))
         assert captured.url.endswith("/bnsi/movies/1")
         assert captured.body == b"token=1&av1=false"
+
+
+class TestCmdCopyAsCurl:
+    """Реальный случай заказчика: Chrome → «Copy as cURL (cmd)».
+
+    Там cmd экранирует `^` всё особенное: кавычки (`^"`), амперсанды (`^&`).
+    Первый разбор дал «адрес: НЕ НАЙДЕН» при 14 разобранных заголовках.
+    """
+
+    CURL = (
+        'curl ^"https://tories-as.stravers.live/bnsi/movies/1847894^" ^\n'
+        '  -H ^"accept: */*^" ^\n'
+        '  -H ^"borth: e82f2e5b|deadbeef^" ^\n'
+        '  -H ^"origin: https://tories-as.stravers.live^" ^\n'
+        '  -H ^"referer: https://tories-as.stravers.live/?token_movie=dc27^" ^\n'
+        '  -H ^"x-requested-with: XMLHttpRequest^" ^\n'
+        '  --data-raw ^"token=5286c49a^&av1=true^&autoplay=0'
+        '^&_ref=s1.1795636688_b9b59a5200accf9ca738b61c'
+        ".aHR0cHM6Ly96bG9yZC5vcmc^&audio=^&subtitle=^\""
+    )
+
+    def test_url_is_clean(self) -> None:
+        from tvhost2 import alloha_replay
+
+        captured = alloha_replay.parse_curl(self.CURL)
+        assert captured.url == "https://tories-as.stravers.live/bnsi/movies/1847894"
+
+    def test_body_ampersands_and_trailing_caret(self) -> None:
+        from tvhost2 import alloha_replay
+
+        body = alloha_replay.parse_curl(self.CURL).body.decode()
+        assert body.startswith("token=5286c49a&av1=true&autoplay=0&_ref=s1.")
+        assert body.endswith("&audio=&subtitle="), "хвостовой ^ от ^\" надо снять"
+        assert "^" not in body
+
+    def test_header_names_clean(self) -> None:
+        from tvhost2 import alloha_replay
+
+        headers = alloha_replay.parse_curl(self.CURL).headers
+        assert set(headers) >= {
+            "accept",
+            "borth",
+            "origin",
+            "referer",
+            "x-requested-with",
+        }
+        assert not any(name.startswith("^") for name in headers)
+
+    def test_bom_and_smart_quotes(self) -> None:
+        """Notepad++ пишет BOM, Word — «умные» кавычки. Оба ломают shlex."""
+        from tvhost2 import alloha_replay
+
+        text = "\ufeff" + self.CURL.replace('^"', "\u201c").replace('"', "\u201d")
+        captured = alloha_replay.parse_curl(text)
+        assert captured.url.endswith("/bnsi/movies/1847894")
+
+    def test_broken_command_still_finds_url(self) -> None:
+        """Непарная кавычка: shlex сдаётся — адрес всё равно надо достать."""
+        from tvhost2 import alloha_replay
+
+        text = "curl 'https://x.live/bnsi/movies/7 -H 'borth: Q|R' --data-raw 'token=7'"
+        captured = alloha_replay.parse_curl(text)
+        assert captured.url == "https://x.live/bnsi/movies/7"
+        assert captured.body == b"token=7"
+
+    def test_guess_url_from_referer(self) -> None:
+        from tvhost2 import alloha_replay
+
+        captured = alloha_replay.parse_curl(
+            'curl -H "referer: https://x.live/?token_movie=1" --data-raw "token=5"'
+        )
+        assert alloha_replay.guess_url(captured) == "https://x.live/bnsi/movies/0"
+
+    def test_clean_header_passes_caret_through(self) -> None:
+        from tvhost2 import alloha_replay
+
+        assert alloha_replay._unescape_cmd("nothing special") == "nothing special"
+        assert alloha_replay._unescape_cmd("a^&b") == "a&b"
+        assert alloha_replay._unescape_cmd("^\"quoted^\"") == '"quoted"'

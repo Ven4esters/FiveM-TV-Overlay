@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import gzip
 import http.client
+import re
 import shlex
 import sys
 import urllib.parse
@@ -92,7 +93,7 @@ def parse_curl(text: str) -> Captured:
     рвут переносами; в Windows-варианте строки соединены `^`, в bash — `\\\\`.
     Оба вида склеиваем, потом разбираем как обычную команду.
     """
-    joined = _join_lines(text)
+    joined = _join_lines(_normalize(text))
     if not joined.strip():
         return Captured()
     tokens = _tokenize(joined)
@@ -105,40 +106,102 @@ def parse_curl(text: str) -> Captured:
         if token in ("-H", "--header") and value:
             name, _, header_value = value.partition(":")
             if name:
-                result.headers[name.strip()] = header_value.strip()
+                result.headers[_unescape_cmd(name.strip())] = _unescape_cmd(header_value.strip())
             index += 2
             continue
         if token in ("-X", "--request") and value:
-            result.method = value.upper()
+            result.method = _unescape_cmd(value).upper()
             index += 2
             continue
         if token in ("--data-raw", "--data", "-d", "--data-binary", "--data-ascii") and value:
-            body_parts.append(_unquote_ansi(value))
+            body_parts.append(_unescape_cmd(_unquote_ansi(value)))
             index += 2
             continue
         if token in ("--url",) and value:
-            result.url = value
+            result.url = _unescape_cmd(value)
             index += 2
             continue
         if token in ("-A", "--user-agent") and value:
-            result.headers["User-Agent"] = value
+            result.headers["User-Agent"] = _unescape_cmd(value)
             index += 2
             continue
         if token in ("-b", "--cookie") and value:
-            result.headers["Cookie"] = value
+            result.headers["Cookie"] = _unescape_cmd(value)
             index += 2
             continue
         if token in ("-e", "--referer") and value:
-            result.headers["Referer"] = value
+            result.headers["Referer"] = _unescape_cmd(value)
             index += 2
             continue
-        if token.startswith("http") and not result.url:
-            result.url = token
+        found = _unescape_cmd(token)
+        if found.startswith("http") and not result.url:
+            result.url = found
         index += 1
     result.body = "&".join(body_parts).encode() if body_parts else b""
+    if not result.url:
+        # Страховка: строка могла прийти так, что shlex склеил не то (BOM в
+        # начале, кавычка побайтово не та, непарная кавычка в теле). Тогда
+        # тянем адрес и тело из текста напрямую — они там точно есть.
+        fallback = _fallback_capture(joined)
+        result.url = result.url or fallback.url
+        result.body = result.body or fallback.body
+        for name, value in fallback.headers.items():
+            result.headers.setdefault(name, value)
     if not result.method:
         result.method = "POST" if result.body else "GET"
     return result
+
+
+URL_RE = re.compile(r"https?://[^\s'\"^]+")
+BODY_RE = re.compile(r"--data(?:-raw|-binary|-ascii|-urlencode)?\s+\^?[\"']([^\"']*)")
+
+
+def _fallback_capture(command: str) -> Captured:
+    """Последний шанс разбора: вытащить адрес и тело регуляркой из текста.
+
+    Используется только когда нормальный разбор не нашёл адрес — то есть
+    когда входной файл побит (BOM, «умные» кавычки из Word, непарная кавычка).
+    """
+    found = Captured()
+    match = URL_RE.search(command)
+    if match:
+        found.url = _unescape_cmd(match.group(0).rstrip("\\"))
+    body = BODY_RE.search(command)
+    if body:
+        found.body = _unescape_cmd(body.group(1)).encode()
+    return found
+
+
+CMD_ESCAPED = set('"&|<>^()%!')
+"""Символы, перед которыми cmd ставит `^`, когда команда идёт через него."""
+
+
+def _unescape_cmd(value: str) -> str:
+    """Снять экранирование cmd: `^&` → `&`, `^"` → `"`, `^"` в конце слова → `"`.
+
+    `^` перед ЛЮБЫМ символом в cmd означает «этот символ буквальный», поэтому
+    правило простое: `^` + символ → символ.
+
+    Хвостовой `^` — особый случай: он стоял перед кавычкой (`^"`), а кавычку
+    `shlex` уже снял. Переносы строк к этому моменту склеены, поэтому такой
+    остаток всегда лишний: без этой чистки `…subtitle=^"` превращалось в
+    `…subtitle=^`, а адрес — в `https://…/bnsi/movies/1847894^`.
+    """
+    if "^" not in value:
+        return value
+    out: list[str] = []
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == "^" and index + 1 < len(value):
+            out.append(value[index + 1])
+            index += 2
+            continue
+        out.append(char)
+        index += 1
+    if out and out[-1] == "^":
+        out.pop()
+    return "".join(out)
 
 
 def _unquote_ansi(value: str) -> str:
@@ -149,6 +212,27 @@ def _unquote_ansi(value: str) -> str:
     if value.startswith("$") and not value.startswith("${"):
         return value[1:]
     return value
+
+
+def _normalize(text: str) -> str:
+    """Убрать то, что ломает разбор даже раньше кавычек.
+
+    * `\ufeff` — BOM: Notepad++ и PowerShell пишут его в начале файла, и
+      первое слово становится `\ufeffcurl`, а первый заголовок — `\ufeff -H`.
+    * «умные» кавычки `\u201c \u201d \u2018 \u2019` — их ставит Word и
+      авто-замена в Блокноте; cmd и shell таких кавычек не знают.
+    * неразрывный пробел `\u00a0` вместо обычного.
+    """
+    text = text.replace("\ufeff", "").replace("\u00a0", " ")
+    for smart, plain in (
+        ("\u201c", '"'),
+        ("\u201d", '"'),
+        ("\u201e", '"'),
+        ("\u2018", "'"),
+        ("\u2019", "'"),
+    ):
+        text = text.replace(smart, plain)
+    return text
 
 
 def _join_lines(text: str) -> str:
@@ -298,6 +382,37 @@ def _read_text(path: Path) -> str:
     return raw.decode("utf-8-sig", "replace")
 
 
+def guess_url(captured: Captured) -> str:
+    """Восстановить `/bnsi` из заголовков, когда сама команда побилась.
+
+    В теле лежит `token`, в `Referer` — адрес плеера со всеми параметрами
+    (`token_movie`, `translation`, `season`, `episode`), в `Origin` — хост.
+    Номер файла без адреса не восстановить, поэтому ищем его в `Referer`
+    или берём из того, что удалось разобрать. Пусто — значит, пусто.
+    """
+    referer = next(
+        (value for name, value in captured.headers.items() if name.lower() == "referer"),
+        "",
+    )
+    origin = next(
+        (value for name, value in captured.headers.items() if name.lower() == "origin"),
+        "",
+    )
+    match = URL_RE.search(referer) or URL_RE.search(origin)
+    if not match:
+        return ""
+    split = urllib.parse.urlsplit(match.group(0))
+    if not split.hostname:
+        return ""
+    if "/bnsi/" in split.path:
+        return match.group(0)
+    # Хост без хвоста `?token_movie=…`: нам нужен только он.
+    base = f"{split.scheme}://{split.netloc}"
+    if captured.url and "/bnsi/" in captured.url:
+        return captured.url
+    return f"{base}/bnsi/movies/0"
+
+
 def _find_input() -> Path | None:
     for name in INPUT_NAMES:
         path = OUT / name
@@ -325,7 +440,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  тело:   {len(captured.body)} байт — {captured.body[:160]!r}")
     print(f"  заголовков: {len(captured.headers)}")
     if not captured.url:
-        print("\nСсылка не разобралась. Проверьте, что вставили именно «Copy as cURL».")
+        captured.url = guess_url(captured)
+    if not captured.url:
+        print("\nСсылка не разобралась, и восстановить её из заголовков не вышло.")
+        print("Скорее всего, вставилась не вся команда: в curl.txt должна быть")
+        print("строка, начинающаяся со слова curl, и в ней — адрес …/bnsi/…")
         return 1
 
     print("\n── Чем запрос браузера отличается от нашего " + "─" * 18)
