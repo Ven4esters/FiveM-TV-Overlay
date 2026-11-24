@@ -12,18 +12,24 @@
 `page_id` лежит в самой странице: `<meta id="page_id" content="10618">`.
 Значит, разбор такой: страница → page_id → JSON → iframe → плеер.
 
-На одном тайтле плееры смешаны, и это важно для честности:
+На одном тайтле плееры смешаны, и каждый разбирается так:
 
-  - **Kodik** — работает, его и разбираем (у «Блича» 13 серий × 27 озвучек);
-  - **CVH** (cdnvideohub) — у нас уже есть для anidub.org, но здесь ссылки
-    идут на промежуточную страницу `ru.yummyani.me/iframeCVH.html`, и её
-    формат отличается: это не тот прямой `<video-player>`, что на anidub;
+  - **Kodik** — ссылка на плеер уже в JSON, отдаём внутреннему Kodik
+    (у «Блича» 13 серий × 27 озвучек);
+  - **CVH** (cdnvideohub) — здесь ссылка ведёт на страницу-обёртку
+    `ru.yummyani.me/iframeCVH.html?dubbing_code=…&anime_id=…&episode=N`.
+    В HTML той страницы плеера нет: его собирает скрипт, и параметры
+    (`pub`, `aggr`, `title_id`) зашиты в бандле. Прочитано из бандла
+    24.11.2026: `data-aggregator="mali"`, `data-publisher-id=745`,
+    `data-title-id=<anime_id>`, `priority-voice=<dubbing_code>`,
+    `episode=<episode>`. Дальше — тот же API, что у anidub.org, поэтому
+    разбор один общий (`cvh.py`), а не вторая копия;
   - **другие плееры** (у сайта их несколько) — их у нас нет, и это
     говорится прямо, а не замалчивается.
 
-Поэтому модуль не «поддерживает yummyani», а поддерживает то, что на
-yummyani реально отдаётся плеером Kodik. Остальное — честный отказ с
-объяснением, а не молчаливая пустота.
+Поэтому озвучки обоих плееров складываются в ОДИН список: человеку не
+важно, из какого плеера студия, ему важен выбор студии. Если плеера нет
+вовсе — честный отказ с названием плеера, а не молчаливая пустота.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ from typing import Any
 from ..core.errors import SourceFailedError
 from ..core.models import SourceState, Stream
 from ..web.fetch import FetchError, fetch_text
+from . import cvh
 from .kodik import KodikSource
 from .kodik_embed import page_title
 
@@ -179,6 +186,15 @@ class YummyAnimeSource:
         return bool(self._tracks(url))
 
     def _tracks(self, page_url: str) -> list[dict[str, str]]:
+        """Дорожки ОБОИХ плееров одним списком: `{"iframe","dubbing","player"}`.
+
+        Человеку не важно, из какого плеера студия — ему важен выбор
+        студии. Поэтому Kodik и CVH стоят подряд, в порядке сайта: сначала
+        всё, что дал Kodik, затем CVH. Внутри каждого — порядок сайта.
+
+        `player` нужен разбору: Kodik получает ссылку готового плеера,
+        а CVH — ссылку обёртки, из которой параметры ещё надо достать.
+        """
         cached = self._cache.get(page_url)
         if cached is not None:
             return cached
@@ -191,7 +207,8 @@ class YummyAnimeSource:
             data = json.loads(raw)
         except (FetchError, json.JSONDecodeError):
             return []
-        tracks = kodik_embeds(data)
+        tracks = [{**track, "player": "kodik"} for track in kodik_embeds(data)]
+        tracks += [{**track, "player": "cvh"} for track in cvh_embeds(data)]
         if tracks:
             self._cache[page_url] = tracks
         self._players[page_url] = players_present(data)
@@ -226,14 +243,15 @@ class YummyAnimeSource:
                 _NAME,
                 f"у этого тайтла видео только через {who}, этот плеер не поддерживается",
                 fix=(
-                    "Мы умеем плеер Kodik — им сайт отдаёт большинство тайтлов. "
-                    "Остальные плееры сайта устроены иначе, и часть из них закрыта "
-                    "по региону. Это ограничение, а не сбой: обойти его нельзя"
+                    "Мы умеем плееры Kodik и CVH — ими сайт отдаёт большинство "
+                    "тайтлов. Остальные устроены иначе, и часть закрыта по "
+                    "региону. Это ограничение, а не сбой: обойти его нельзя"
                 ),
                 state=SourceState.PARTIAL,
             )
         index = translation_index if 0 <= translation_index < len(tracks) else 0
-        stream = self._inner.resolve(tracks[index]["iframe"], episode=episode)
+        chosen = tracks[index]
+        stream = self._play(chosen, episode)
         return Stream(
             source=_NAME,
             title=self._titles.get(url) or stream.title,
@@ -242,15 +260,127 @@ class YummyAnimeSource:
             headers=stream.headers,
             duration_s=stream.duration_s,
             is_direct_file=stream.is_direct_file,
+            # Озвучки — ОБЩИЙ список обоих плееров: индекс пришёл из него
+            # же, и человек не должен видеть другой список после выбора.
             audio_tracks=tuple(
                 {"id": str(i), "title": track["dubbing"], "hash": "", "type": "seria"}
                 for i, track in enumerate(tracks)
             ),
             subtitles=stream.subtitles,
-            # Серии — от внутреннего Kodik как есть: сайт отдаёт сериал,
+            # Серии — от выбранного плеера как есть: сайт отдаёт сериал,
             # а список серий знает плеер.
             episodes=stream.episodes,
             episode=stream.episode,
             episode_season=stream.episode_season,
             can_switch_episode=stream.can_switch_episode,
         )
+
+    def _play(self, track: dict[str, str], episode: int | None) -> Stream:
+        """Поток выбранной дорожки: Kodik или CVH — по имени плеера.
+
+        Разница только в том, откуда берутся параметры: у Kodik ссылка на
+        плеер уже готова, у CVH ссылка ведёт на страницу-обёртку, и
+        параметры (pub/aggr/title_id) надо достать из её адреса. Дальше
+        разбор общий, поэтому источник сам ничего про CVH не знает.
+        """
+        if track.get("player") != "cvh":
+            return self._inner.resolve(track["iframe"], episode=episode)
+        params = cvh_params(track["iframe"])
+        if not params:
+            raise SourceFailedError(
+                _NAME,
+                "в ссылке CVH нет номера тайтла",
+                fix="Скопируйте ссылку на тайтл заново — сайт мог поменять адрес",
+                state=SourceState.PARTIAL,
+            )
+        number = episode
+        if number is None and params["episode"].isdigit():
+            number = int(params["episode"])
+        return cvh.build_stream(
+            source_name=_NAME,
+            site="old.yummyani.me",
+            params=cvh.CvhParams(pub=CVH_PUB, aggr=CVH_AGGR, title_id=params["anime_id"]),
+            base_title=self._titles.get(track["iframe"]) or "",
+            translation_index=0,
+            episode=number,
+            cache_key=f"yummy:{params['anime_id']}",
+            # Подпись okcdn привязана к UA: ставим тот же Firefox, что и в API.
+            stream_headers={"User-Agent": cvh.FIREFOX_UA, "Referer": "https://old.yummyani.me/"},
+        )
+
+
+# ----------------------------------------------------------------------
+# CVH: второй плеер сайта
+# ----------------------------------------------------------------------
+
+CVH_PUB = "745"
+"""`data-publisher-id` из бандла iframeCVH. Прочитано 24.11.2026:
+`{"data-aggregator":"mali","data-title-id":...,"data-publisher-id":745}`.
+Это номер сайта yummyanime в API cdnvideohub, у anidub.org свой (`19`)."""
+
+CVH_AGGR = "mali"
+"""`data-aggregator` yummyanime. У anidub.org `cvh` — и это единственное
+отличие двух сайтов друг от друга внутри одного и того же API."""
+
+
+def is_cvh_iframe(url: str) -> bool:
+    """Ссылка ведёт на страницу-обёртку CVH, а не на готовый плеер."""
+    return "iframecvh" in (url or "").lower()
+
+
+def cvh_params(iframe_url: str) -> dict[str, str]:
+    """Параметры CVH из адреса обёртки: `anime_id`, `episode`, `dubbing_code`.
+
+    Пустой словарь — в адресе нет `anime_id`: без него API ответит мусором,
+    и лучше сказать «не нашёл плеер», чем разбирать мусор.
+
+    Внимание на имя: `anime_id` у сайта — это НЕ `page_id` каталога
+    (61967 против 21747 у одного и того же тайтла). Брать `page_id` вместо
+    него нельзя: API вернёт чужой тайтл.
+    """
+    parsed = urllib.parse.urlsplit(iframe_url or "")
+    query = urllib.parse.parse_qs(parsed.query)
+    anime_id = (query.get("anime_id") or [""])[0].strip()
+    if not anime_id:
+        return {}
+    return {
+        "anime_id": anime_id,
+        "episode": (query.get("episode") or [""])[0].strip(),
+        "dubbing_code": (query.get("dubbing_code") or [""])[0].strip(),
+    }
+
+
+def cvh_embeds(data: Any) -> list[dict[str, str]]:
+    """Озвучки CVH ПЕРВОЙ серии: `{"iframe", "dubbing"}` в порядке сайта.
+
+    Почему только первая серия: API отдаёт плоский список «серия × озвучка»,
+    и на 13 серий с 20 студиями это 260 пунктов в пульте. Озвучка — выбор
+    ВНУТРИ серии, поэтому список студий берём у первой.
+    """
+    items = (data or {}).get("response") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return []
+    rows = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        info = item.get("data") or {}
+        player = str(info.get("player") or "")
+        iframe = str(item.get("iframe_url") or "")
+        if "cvh" not in player.lower() and not is_cvh_iframe(iframe):
+            continue
+        rows.append(item)
+    numbers = {str(item.get("number")) for item in rows}
+    if str(FIRST_EPISODE) in numbers:
+        rows = [item for item in rows if str(item.get("number")) == str(FIRST_EPISODE)]
+    found: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in rows:
+        url = str(item.get("iframe_url") or "")
+        url = url if url.startswith("http") else "https:" + url
+        key = str((item.get("data") or {}).get("dubbing") or url)
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append({"iframe": url, "dubbing": str((item.get("data") or {}).get("dubbing") or "")})
+    return found

@@ -162,8 +162,14 @@ class TestSelection:
         assert pick(PLAYLIST, 1)["vkId"] == "222"
 
     def test_index_out_of_range_falls_back(self):
-        """Кривой индекс не должен ронять разбор."""
-        assert pick(PLAYLIST, 99)["vkId"] == "333"
+        """Кривой индекс не должен ронять разбор — берём первую озвучку.
+
+        Раньше здесь был clamp к последней дорожке (`min(index, len-1)`):
+        индекс 99 на трёх озвучках давал третью. Это выдавало человеку
+        случайную озвучку вместо главной, которую сайт ставит первой.
+        Теперь как у Kodik: неверный индекс — берём первую.
+        """
+        assert pick(PLAYLIST, 99)["vkId"] == "111"
 
     def test_empty_playlist(self):
         assert pick({"items": []}) == {}
@@ -203,9 +209,17 @@ class TestHeaders:
 
 class TestStreamShape:
     def test_direct_file_flag(self):
-        """hls.js не разбирает mp4 и молчит об этом — нужен явный признак."""
-        source = inspect_source()
-        assert "is_direct_file=True" in source
+        """hls.js не разбирает mp4 и молчит об этом — нужен явный признак.
+
+        Собирается поток в общем `cvh.build_stream`: тот же плеер стоит на
+        yummyanime, и признак должен быть один на оба сайта, а не в каждом
+        источнике по копии.
+        """
+        import inspect
+
+        from tvhost2.sources import cvh
+
+        assert "is_direct_file=True" in inspect.getsource(cvh.build_stream)
 
     def test_qualities_are_probed(self):
         """Размер кадра обязан читаться из файла, а не браться из имени поля."""

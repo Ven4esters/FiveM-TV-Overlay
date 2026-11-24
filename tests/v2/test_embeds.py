@@ -198,3 +198,50 @@ class TestMessages:
         with pytest.raises(SourceFailedError) as caught:
             source.resolve("https://old.yummyani.me/catalog/item/x")
         assert "CVH" in str(caught.value)
+
+
+class TestYummyCvh:
+    """CVH на yummyanime: ссылка — обёртка, параметры плеера в её адресе.
+
+    Прочитано из бандла `iframeCVH` 24.11.2026: компонент собирается с
+    `data-aggregator="mali"`, `data-publisher-id=745`,
+    `data-title-id=<anime_id из адреса>`. То есть всё, что нужно общему
+    разбору, лежит в query-строке обёртки.
+    """
+
+    WRAP = (
+        "https://ru.yummyani.me/iframeCVH.html"
+        "?dubbing_code=VOLKOFRENIA&anime_id=61967&episode=3&dubbing=%D0%9E%D0%B7%D0%B2"
+    )
+
+    def test_params_from_wrapper(self):
+        params = yummy.cvh_params(self.WRAP)
+        assert params["anime_id"] == "61967"
+        assert params["episode"] == "3"
+        assert params["dubbing_code"] == "VOLKOFRENIA"
+
+    def test_anime_id_is_not_page_id(self):
+        """`anime_id` (61967) и `page_id` (21747) — РАЗНЫЕ числа.
+
+        Спутать их легко: оба «номер тайтла». API по `page_id` ответит
+        чужим тайтлом или пустотой.
+        """
+        assert yummy.cvh_params(self.WRAP)["anime_id"] != "21747"
+
+    def test_no_anime_id_means_empty(self):
+        assert yummy.cvh_params("https://ru.yummyani.me/iframeCVH.html?episode=1") == {}
+
+    def test_wrapper_recognised(self):
+        assert yummy.is_cvh_iframe("//ru.yummyani.me/iframeCVH.html?x=1")
+        assert not yummy.is_cvh_iframe("//kodikplayer.com/season/1/abc/720p")
+
+    def test_cvh_embeds_only_first_episode(self):
+        """13 серий × 20 студий — это 260 пунктов, а не «выбор озвучки»."""
+        embeds = yummy.cvh_embeds(YUMMY_JSON)
+        assert len(embeds) == 1
+        assert embeds[0]["dubbing"] == "Озвучка StudioBand"
+
+    def test_kodik_tracks_name_their_player(self):
+        """У каждой дорожки есть имя плеера: по нему resolve выбирает разбор."""
+        tracks = yummy.kodik_embeds(YUMMY_JSON)
+        assert tracks and all("iframe" in t for t in tracks)
