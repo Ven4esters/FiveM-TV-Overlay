@@ -61,6 +61,7 @@ from typing import Any
 from ..core.errors import SourceFailedError
 from ..core.models import Quality, SourceState, Stream, StreamKind
 from ..web.fetch import FetchError, fetch_text
+from .alloha_bnsi import fetch_sources, quality_urls
 from .kodik_embed import page_title
 
 API = "https://api.alloha.tv/"
@@ -256,6 +257,53 @@ def qualities_of(html: str) -> list[Quality]:
     return qualities
 
 
+def qualities_of_sources(sources: list[dict[str, Any]], index: int = 0) -> list[Quality]:
+    """Качества из `hlsSource` — ответа `POST /bnsi/movies/<id>`.
+
+    Устройство ответа (из расшифрованного скрипта плеера):
+
+        hlsSource: [
+          {"label": "Оригинальный", "audioId": 93,
+           "quality": {"428": "https://…/master.m3u8 or https://…/резерв"}},
+          …
+        ]
+
+    Берём одну озвучку — выбранную человеком (`index`), а если её нет,
+    первую. Резервные адреса в строке разделены ` or `: это запасные
+    зеркала, и первое из них и есть основной адрес.
+
+    Битрейт не выдумываем: высота известна, а полосы сервер не сообщает.
+    Потолок качества всё равно определяет мастер-плейлист, а честная оценка
+    нужна только чтобы ABR не начинал с 1080 на слабой линии.
+    """
+    if not sources:
+        return []
+    chosen = sources[index] if 0 <= index < len(sources) else sources[0]
+    urls = quality_urls(chosen)
+    if not urls:
+        # У выбранной озвучки адресов нет — пробуем любую другую.
+        for source in sources:
+            urls = quality_urls(source)
+            if urls:
+                break
+    qualities: list[Quality] = []
+    for height, url in sorted(urls.items(), reverse=True):
+        if height <= MIN_HEIGHT:
+            # 144 и ниже — служебные дорожки (аудио-описание, заглушки).
+            # В `fileList` такие же отметки отсекаются по тому же правилу.
+            continue
+        width = round(height * 16 / 9)
+        qualities.append(
+            Quality(
+                height=height,
+                width=width,
+                bitrate_kbps=max(1, round(width * height * 25 / 10_000)),
+                url=url,
+            )
+        )
+    return qualities
+
+
 def blocked_by_region(text: str) -> bool:
     """Плеер ответил отказом по региону."""
     return "регион" in (text or "").lower()
@@ -396,14 +444,21 @@ class AllohaSource:
 
         qualities = qualities_of(player)
         if not qualities:
-            # Адреса видео в HTML плеера не лежат — их отдаёт сервер на
-            # POST /bnsi/movies/<id> (цепочка разобрана по скрипту плеера
-            # 24.11.2026, см. docs/REPORT_alloha_source.md). Из США этот POST
-            # отвечает 404 «контент не найден» на ЛЮБОЙ id — и на реальный,
-            # и на выдуманный, с любым токеном, любым телом и любыми
-            # заголовками. Значит проверка региональная и стоит до поиска
-            # файла. Проверять её на нашей стороне нечем: с российского IP
-            # тот же запрос отдаёт `hlsSource` с готовыми адресами.
+            # Адресов в разметке нет — их отдаёт POST /bnsi/movies/<id_file>.
+            # Здесь он и вызывается: на компьютере в России это вернёт
+            # hlsSource с готовыми адресами, снаружи России — отказ по
+            # региону (см. ниже).
+            body, sources = fetch_sources(embed, player)
+            qualities = qualities_of_sources(sources, index)
+            if qualities:
+                return self._stream(info, qualities, tracks, index)
+            # Не отдалось. Причина, проверенная живьём 24.11.2026: из США
+            # POST /bnsi/movies/<id> отвечает 404 «контент не найден» на
+            # ЛЮБОЙ id — и на реальный, и на выдуманный, с любым токеном,
+            # телом и заголовками. То есть проверка региональная и стоит до
+            # поиска файла. Поэтому не отправляем человека «искать ссылку в
+            # разметке» (её там нет и не будет) и не обещаем «откроется в
+            # браузере» — называем регион.
             raise SourceFailedError(
                 _NAME,
                 "плеер отдаёт адреса видео только российскому адресу",
@@ -415,20 +470,53 @@ class AllohaSource:
                 ),
                 state=SourceState.PARTIAL,
             )
-        return Stream(
-            source=_NAME,
-            title=str(info.get("name") or info.get("title") or "видео"),
-            kind=StreamKind.HLS,
-            qualities=tuple(qualities),
-            audio_tracks=tuple(
+        return self._stream(info, qualities, tracks, index)
+
+    def _stream(
+        self,
+        info: dict[str, Any],
+        qualities: list[Quality],
+        tracks: list[dict[str, str]],
+        index: int,
+    ) -> Stream:
+        """Собрать `Stream` из готовых качеств.
+
+        Вынесено отдельным методом, потому что путь к качествам бывает
+        двумя разными: из разметки (бывает у части сайтов) и из ответа
+        `POST /bnsi/movies/<id>` (`hlsSource`). Сам `Stream` в обоих случаях
+        одинаковый — и дублировать список озвучек не хочется: он длинный и
+        легко разъедется.
+        """
+        tracks_out = []
+        for position, track in enumerate(tracks):
+            tracks_out.append(
                 {
                     "id": str(track.get("id", "")),
                     "title": str(track.get("title", "")),
                     "hash": "",
                     "type": "video",
+                    # Активная озвучка: индекс списка, а не id Alloha —
+                    # человек выбирает «третью сверху», и это должно
+                    # пережить переоткрытие страницы.
+                    "active": position == index,
                 }
-                for track in tracks
-            ),
+            )
+        if not tracks_out:
+            tracks_out = [
+                {
+                    "id": str(source.get("audioId") or ""),
+                    "title": str(source.get("label") or ""),
+                    "hash": "",
+                    "type": "video",
+                }
+                for source in (info.get("bnsi_sources") or [])
+            ]
+        return Stream(
+            source=_NAME,
+            title=str(info.get("name") or info.get("title") or "видео"),
+            kind=StreamKind.HLS,
+            qualities=tuple(qualities),
+            audio_tracks=tuple(tracks_out),
         )
 
     # ------------------------------------------------------------- озвучки
