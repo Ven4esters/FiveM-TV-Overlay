@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from ..audio import loudness
+from ..core import diagnostics as diag
 from ..core import registry
 from ..sources import register_all
 from . import hls as hls_bridge
@@ -175,6 +176,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
             "/index.html": self._index,
             "/sessions": self._list_sessions,
             "/sources": self._list_sources,
+            "/diag": self._diag,
             "/hls": self._bridge,
         }
         handler = exact.get(path)
@@ -206,14 +208,27 @@ class OverlayHandler(BaseHTTPRequestHandler):
 
     def _list_sessions(self) -> None:
         items = [
-            {"sid": s.sid, "title": s.title, "source": s.source_name}
-            for s in STATE.sessions.all()
+            {"sid": s.sid, "title": s.title, "source": s.source_name} for s in STATE.sessions.all()
         ]
         self._json(200, {"sessions": items})
 
     def _list_sources(self) -> None:
         register_all()
         self._json(200, {"sources": registry.status_table()})
+
+    def _diag(self, query: dict[str, list[str]]) -> None:
+        """Журнал работы для вкладки «Журнал».
+
+        limit ограничен: отдавать 4000 строк в окно через HTTP бессмысленно,
+        человек всё равно смотрит хвост.
+        """
+        try:
+            limit = min(int((query.get("limit") or ["300"])[0]), 1000)
+        except ValueError:
+            limit = 300
+        self._json(
+            200, {"text": diag.JOURNAL.tail_text(limit), "entries": diag.JOURNAL.tail_json(limit)}
+        )
 
     def _route_post(self, path: str, query: dict[str, list[str]]) -> None:
         if path.startswith("/control/"):
@@ -481,6 +496,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    diag.mark_start()
     server = serve(args.host, args.port)
     sys.stdout.write(f"5M Video Overlay 2.0: http://127.0.0.1:{args.port}/\n")
     try:
