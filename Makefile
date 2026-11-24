@@ -18,12 +18,12 @@ check: lint types test
 	@echo "✅ Все проверки пройдены"
 
 fix:
-	$(PY) -m ruff format $(SRC) $(TESTS)
-	$(PY) -m ruff check $(SRC) $(TESTS) --fix
+	$(PY) -m ruff format $(SRC) $(TESTS) tools
+	$(PY) -m ruff check $(SRC) $(TESTS) tools --fix
 
 lint:
-	$(PY) -m ruff format --check $(SRC) $(TESTS)
-	$(PY) -m ruff check $(SRC) $(TESTS)
+	$(PY) -m ruff format --check $(SRC) $(TESTS) tools
+	$(PY) -m ruff check $(SRC) $(TESTS) tools
 
 types:
 	$(PY) -m mypy $(SRC)

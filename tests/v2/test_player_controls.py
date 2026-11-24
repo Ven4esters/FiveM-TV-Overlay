@@ -176,3 +176,29 @@ class TestLiveMode:
     def test_live_flag_passed(self) -> None:
         vod = player.render(_session(live=False), "http://127.0.0.1:9001", "hls.min.js")
         assert "LIVE = false" in vod
+
+
+class TestCloseSession:
+    """Закрытие сессии: его не было, и сессии копились до шести часов."""
+
+    def test_close_route_exists(self) -> None:
+        """POST /close/<sid> должен снимать и сессию, и очередь команд."""
+        import inspect
+
+        from tvhost2.web import server
+
+        source = inspect.getsource(server.OverlayHandler)
+        assert "_close_session" in source
+        assert 'path.startswith("/close/")' in source
+
+    def test_drop_removes_runtime(self) -> None:
+        """drop() обязан чистить и рантайм, иначе очередь команд течёт."""
+        from tvhost2.web import server
+
+        state = server.AppState()
+        session = state.sessions.create("https://example.com/x")
+        state.runtime_for(session.sid).push("pause", None)
+        assert session.sid in state.runtime
+        state.drop(session.sid)
+        assert session.sid not in state.runtime
+        assert state.sessions.get(session.sid) is None

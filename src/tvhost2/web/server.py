@@ -228,6 +228,16 @@ class OverlayHandler(BaseHTTPRequestHandler):
         ]
         self._json(200, {"sessions": items})
 
+    def _close_session(self, sid: str) -> None:
+        """Закрыть сессию: убрать и состояние, и очередь команд плеера.
+
+        Без этого маршрута закрыть просмотр было нечем — сессии жили до
+        шести часов и копились. Замеру памяти этот маршрут нужен, чтобы
+        измерить «до» и «после», а не гадать по графику.
+        """
+        STATE.drop(sid)
+        return self._json(200, {"ok": True, "closed": sid})
+
     def _list_sources(self) -> None:
         register_all()
         self._json(200, {"sources": registry.status_table()})
@@ -255,6 +265,9 @@ class OverlayHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/trans/"):
             self._translation(path[len("/trans/") :].strip("/"), query)
+            return
+        if path.startswith("/close/"):
+            self._close_session(path[len("/close/") :].strip("/"))
             return
         self._json(404, {"error": f"нет маршрута {path}"})
 
