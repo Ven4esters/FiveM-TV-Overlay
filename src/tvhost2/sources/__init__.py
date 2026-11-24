@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 from ..core import registry
+from .anidub import AnidubSource, is_anidub
 from .base import YtDlpSource, extract_info, pick_direct_formats, pick_hls_qualities
+from .hdrezka import HdrezkaSource, is_hdrezka
 from .kodik import KodikRef, KodikSource, decrypt_link, parse_player_url, rot18
 from .okru import OkRuSource, is_okru
 from .rutube import RutubeSource, video_id
@@ -16,6 +18,8 @@ from .vk import VkSource, nominal_from_url
 from .youtube import YouTubeSource
 
 __all__ = [
+    "AnidubSource",
+    "HdrezkaSource",
     "KodikRef",
     "KodikSource",
     "OkRuSource",
@@ -27,6 +31,8 @@ __all__ = [
     "channel_name",
     "decrypt_link",
     "extract_info",
+    "is_anidub",
+    "is_hdrezka",
     "is_okru",
     "link_kind",
     "nominal_from_url",
@@ -49,3 +55,5 @@ def register_all() -> None:
     registry.register(KodikSource())
     registry.register(TwitchSource())
     registry.register(OkRuSource())
+    registry.register(AnidubSource())
+    registry.register(HdrezkaSource())

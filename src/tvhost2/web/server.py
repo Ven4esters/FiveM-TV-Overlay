@@ -511,6 +511,9 @@ def _referer_headers(url: str) -> dict[str, str]:
         return {"Referer": "https://rutube.ru/"}
     if "okcdn" in low or "vkvd" in low or "mycdn" in low:
         return {"Referer": "https://vk.com/"}
+    if "anivids" in low or "ladonyvesna" in low:
+        # Балансер anidub отдаёт 403 без Referer сайта.
+        return {"Referer": "https://anidub.com/", "Accept-Language": "ru-RU,ru;q=0.9"}
     return {}
 
 
