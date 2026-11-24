@@ -153,9 +153,11 @@ def test_serve_mode_stops_server_on_exit() -> None:
     from tvhost2.ui.__main__ import _start_server
 
     port = 9403
-    httpd = _start_server("127.0.0.1", port)
-    worker = getattr(httpd, "_worker", None)
-    assert worker is not None and worker.is_alive(), "поток сервера не запустился"
+    running = _start_server("127.0.0.1", port)
+    # Сервер и его поток возвращаются вместе: раньше поток «прятался» полем
+    # внутри сервера, которого у ThreadingHTTPServer нет, — получалось
+    # присваивание в объект мимо типа, и mypy это ловил.
+    assert running.worker.is_alive(), "поток сервера не запустился"
 
     # Сервер реально отвечает, пока работает
     import urllib.request
@@ -164,15 +166,15 @@ def test_serve_mode_stops_server_on_exit() -> None:
         assert response.status == 200
 
     # Останавливаем ровно так, как это делает main()
-    httpd.shutdown()
-    worker.join(timeout=5)
-    httpd.server_close()
+    running.server.shutdown()
+    running.worker.join(timeout=5)
+    running.server.server_close()
 
-    assert not worker.is_alive(), "поток сервера остался жить после shutdown"
+    assert not running.worker.is_alive(), "поток сервера остался жить после shutdown"
 
     # Порт освобождён: повторный запуск на нём не падает
     time.sleep(0.2)
     again = _start_server("127.0.0.1", port)
-    again.shutdown()
-    getattr(again, "_worker", None).join(timeout=5) if getattr(again, "_worker", None) else None
-    again.server_close()
+    again.server.shutdown()
+    again.worker.join(timeout=5)
+    again.server.server_close()

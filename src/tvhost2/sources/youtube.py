@@ -201,7 +201,7 @@ class YouTubeSource(YtDlpSource):
             )
         return sort_qualities(found)
 
-    def resolve(self, url: str) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:  # noqa: ARG002
         info = extract_info(url, **self.extractor_opts())
         is_live = bool(info.get("is_live"))
 

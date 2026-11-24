@@ -157,7 +157,7 @@ class VkSource(YtDlpSource):
         best = max(audio, key=lambda f: float(f.get("tbr") or 0))
         return str(best.get("url") or "")
 
-    def resolve(self, url: str) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:  # noqa: ARG002
         info = extract_info(url, **self.extractor_opts())
         qualities = self.build_qualities(info)
         if not qualities:

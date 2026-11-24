@@ -96,7 +96,7 @@ class TwitchSource(YtDlpSource):
         # идут через mhtml и высоты в нужном диапазоне не имеют.
         return pick_clip_formats(info.get("formats") or [])
 
-    def resolve(self, url: str) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:  # noqa: ARG002
         info = extract_info(url, **self.extractor_opts())
         qualities = self.build_qualities(info)
 

@@ -70,7 +70,7 @@ class RutubeSource(YtDlpSource):
             return (Quality(height=height, width=width, bitrate_kbps=tbr, url=mux),)
         return ()
 
-    def resolve(self, url: str) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:  # noqa: ARG002
         """Ссылка → поток с запасным путём через embed.
 
         Бывает, что страница видео отдаёт пустую разметку (A/B-тест,

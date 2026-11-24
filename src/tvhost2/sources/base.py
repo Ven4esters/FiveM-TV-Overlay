@@ -164,8 +164,14 @@ class YtDlpSource:
     def build_qualities(self, info: dict[str, Any]) -> tuple[Quality, ...]:
         return pick_hls_qualities(info.get("formats") or [])
 
-    def resolve(self, url: str) -> Stream:
-        """Ссылка → поток. Ошибки — уже человеческие (см. base.extract_info)."""
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:  # noqa: ARG002
+        """Ссылка → поток. Ошибки — уже человеческие (см. base.extract_info).
+
+        `translation_index` в контракте ради Kodik: у него каждая озвучка —
+        отдельный поток. Остальным сайтам выбирать не из чего, параметр
+        молча игнорируется — но сигнатура у всех одна, и mypy может
+        проверить, что источник выполняет контракт.
+        """
         info = extract_info(url, **self.extractor_opts())
         qualities = self.build_qualities(info)
         title = str(info.get("title") or "").strip() or "Без названия"

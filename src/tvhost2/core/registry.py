@@ -38,8 +38,15 @@ class Source(Protocol):
     def matches(self, url: str) -> bool:
         """Умеет ли этот источник открывать такую ссылку."""
 
-    def resolve(self, url: str) -> Stream:
-        """Ссылка → поток. Бросает OverlayError с понятным текстом."""
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:
+        """Ссылка → поток. Бросает OverlayError с понятным текстом.
+
+        `translation_index` — какая озвучка нужна. У большинства сайтов
+        дорожка одна, и параметр просто игнорируется; реально его понимает
+        только Kodik (там каждая озвучка — отдельный поток). В контракте
+        он есть, потому что вызывающий код (resolver) передаёт его всем:
+        иначе mypy справедливо ругался на неожиданный аргумент.
+        """
 
 
 class Registry:

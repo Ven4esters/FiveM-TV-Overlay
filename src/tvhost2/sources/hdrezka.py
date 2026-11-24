@@ -167,7 +167,7 @@ class HdrezkaSource:
     def matches(self, url: str) -> bool:
         return is_hdrezka(url)
 
-    def resolve(self, _url: str) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:  # noqa: ARG002
         """Ссылка на страницу → поток.
 
         Браузерную сессию здесь не поднимаем: она живёт в web/browser.py

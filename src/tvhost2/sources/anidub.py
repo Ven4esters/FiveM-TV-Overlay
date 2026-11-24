@@ -140,7 +140,7 @@ class AnidubSource:
     def matches(self, url: str) -> bool:
         return is_anidub(url)
 
-    def resolve(self, url: str) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:  # noqa: ARG002
         """Ссылка на страницу серии → поток.
 
         Ступени ровно как у сайта: страница → iframe плеера → HTML плеера
@@ -214,10 +214,15 @@ class AnidubSource:
             qualities=qualities,
             # CDN anivids отвечает 403 на ffmpeg-отпечаток: замер громкости
             # идёт мимо моста, поэтому заголовки обязаны ехать вместе с потоком.
+            # UA именно Firefox, а не Chrome — проверено перебором:
+            # CDN anivids отвечает 403 на «AppleWebKit/… Chrome/131» и 200
+            # на Firefox. Это тот же UA, что fetch() ставит по умолчанию
+            # для незнакомых хостов, поэтому и замер громкости через ffmpeg
+            # обязан слать ровно его, иначе получит 403.
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) "
+                    "Gecko/20100101 Firefox/121.0"
                 ),
                 "Referer": "https://anidub.com/",
             },

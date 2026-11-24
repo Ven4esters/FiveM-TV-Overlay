@@ -17,6 +17,8 @@ from __future__ import annotations
 import argparse
 import sys
 import threading
+from dataclasses import dataclass
+from http.server import ThreadingHTTPServer
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
@@ -26,7 +28,15 @@ from .api import Api
 from .panel import Panel
 
 
-def _start_server(host: str, port: int):
+@dataclass
+class _RunningServer:
+    """Сервер и его поток — вместе, чтобы их нельзя было перепутать."""
+
+    server: ThreadingHTTPServer
+    worker: threading.Thread
+
+
+def _start_server(host: str, port: int) -> _RunningServer:
     """Поднять прокси в фоновом потоке того же процесса.
 
     Возвращает сервер: закрывать его обязано вызывающее. Если этого не
@@ -39,8 +49,11 @@ def _start_server(host: str, port: int):
     server = serve(host, port)
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
-    server._worker = worker  # чтобы дождаться при остановке
-    return server
+    # Поток кладём рядом с сервером, а не внутрь него: у ThreadingHTTPServer
+    # такого поля нет, и присваивание «в объект» обманывало и читателя,
+    # и проверку типов. Возвращаем пару — вызывающий код сам решает,
+    # когда дождаться потока.
+    return _RunningServer(server=server, worker=worker)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -64,9 +77,9 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("FiveM Video Overlay")
     app.setStyleSheet(theme.stylesheet())
 
-    httpd = None
+    running: _RunningServer | None = None
     if args.serve:
-        httpd = _start_server(args.listen, args.port)
+        running = _start_server(args.listen, args.port)
 
     panel = Panel(api=Api(base=f"http://127.0.0.1:{args.port}"))
     panel.show()
@@ -76,15 +89,13 @@ def main(argv: list[str] | None = None) -> int:
         # Останавливаем прокси ДО разрушения интерфейса. Иначе поток сервера
         # продолжает работать с уже удалёнными объектами Qt — это и давало
         # «pure virtual method called» при закрытии окна.
-        if httpd is not None:
+        if running is not None:
             # shutdown() просит цикл остановиться, но НЕ ждёт его. Без join
             # поток продолжает жить, пока Python разрушает интерпретатор —
             # отсюда «pure virtual method called» и трейсбек при закрытии.
-            httpd.shutdown()
-            worker = getattr(httpd, "_worker", None)
-            if worker is not None:
-                worker.join(timeout=5)
-            httpd.server_close()
+            running.server.shutdown()
+            running.worker.join(timeout=5)
+            running.server.server_close()
 
 
 if __name__ == "__main__":

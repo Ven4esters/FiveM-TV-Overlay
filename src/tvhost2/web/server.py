@@ -29,6 +29,7 @@ import sys
 import threading
 import urllib.parse
 from collections import deque
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -171,34 +172,48 @@ class OverlayHandler(BaseHTTPRequestHandler):
         Таблица читается сверху вниз и не растёт сложностью при
         добавлении маршрута.
         """
-        exact = {
+        # Точные адреса: одним параметры запроса не нужны, другим нужны.
+        # Таблицы разные, потому что и сигнатуры разные — так это видно
+        # и человеку, и mypy, без проверки «а этот метод берёт query?».
+        exact: dict[str, Callable[[], None]] = {
             "/": self._index,
             "/index.html": self._index,
             "/sessions": self._list_sessions,
             "/sources": self._list_sources,
+        }
+        plain = exact.get(path)
+        if plain is not None:
+            return plain()
+
+        exact_with_query: dict[str, Callable[[dict[str, list[str]]], None]] = {
             "/diag": self._diag,
             "/hls": self._bridge,
         }
-        handler = exact.get(path)
-        if handler is not None:
-            if path in ("/", "/index.html", "/sessions", "/sources"):
-                return handler()
-            return handler(query)
-        prefixes = (
+        with_query = exact_with_query.get(path)
+        if with_query is not None:
+            return with_query(query)
+        # Префиксы разложены по двум таблицам, а не по одной с проверкой
+        # «а этот метод берёт query?»: раньше список проверялся строкой,
+        # и mypy справедливо не мог понять, какие аргументы передаются.
+        # Теперь видно: этим нужен только хвост адреса…
+        sid_routes: tuple[tuple[str, Callable[[str], None]], ...] = (
             ("/player/", self._player_page),
             ("/stream/", self._stream),
-            ("/cmd/", self._commands),
             ("/state/", self._state),
             ("/loudness/", self._loudness),
             ("/static/", self._static),
+        )
+        for prefix, sid_method in sid_routes:
+            if path.startswith(prefix):
+                return sid_method(path[len(prefix) :].strip("/"))
+        # …а этим ещё и параметры запроса.
+        sid_query_routes: tuple[tuple[str, Callable[[str, dict[str, list[str]]], None]], ...] = (
+            ("/cmd/", self._commands),
             ("/subs/", self._subtitle),
         )
-        for prefix, method in prefixes:
+        for prefix, query_method in sid_query_routes:
             if path.startswith(prefix):
-                tail = path[len(prefix) :].strip("/")
-                if prefix in ("/cmd/", "/subs/"):
-                    return method(tail, query)
-                return method(tail)
+                return query_method(path[len(prefix) :].strip("/"), query)
         if path == "/new":
             return self._create_session(query)
         self._json(404, {"error": f"нет маршрута {path}"})
@@ -283,11 +298,14 @@ class OverlayHandler(BaseHTTPRequestHandler):
     def _player_page(self, sid: str) -> None:
         session = STATE.sessions.get(sid)
         if session is None:
+            # return обязателен: без него код шёл дальше и звал render(None),
+            # что падало уже внутри рендера — с трейсбеком вместо страницы.
             self._send(
                 404,
                 _html_error("Сессия не найдена", "Создайте новую в оверлее."),
                 "text/html; charset=utf-8",
             )
+            return
         page = player_page.render(
             session, self.proxy_base, f"{self.proxy_base}/static/{HLS_JS_NAME}"
         )
@@ -336,7 +354,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
         cmd = (query.get("cmd") or [""])[0]
         if not cmd:
             return self._json(400, {"error": "нужен параметр cmd"})
-        raw = (query.get("value") or [None])[0]
+        raw: str | None = (query.get("value") or [None])[0]  # type: ignore[list-item]
         value: Any = raw
         if raw is not None:
             low = raw.lower()
@@ -468,7 +486,12 @@ class OverlayHandler(BaseHTTPRequestHandler):
         with STATE.loudness_lock:  # замер тяжёлый: не пускаем параллельно
             cached = STATE.loudness.get(url)
             if cached is None:
-                value = loudness.measure(url, _referer_headers(url))
+                ffmpeg_exe = _ffmpeg_exe()
+                if ffmpeg_exe is None:
+                    return self._json(
+                        200, {"gainDb": None, "note": "ffmpeg не найден — замер невозможен"}
+                    )
+                value = loudness.measure(url, ffmpeg_exe, _measure_headers(session, url))
                 if value is None:
                     return self._json(200, {"gainDb": None, "note": "замер не удался"})
                 STATE.loudness.put(url, value)
@@ -500,6 +523,32 @@ def make_handler(base: str) -> type[BaseHTTPRequestHandler]:
         proxy_base = base
 
     return _Bound
+
+
+def _measure_headers(session: Any, url: str) -> dict[str, str]:
+    """Заголовки для ffmpeg: сначала то, что просит источник, потом общее.
+
+    Источник знает свой CDN лучше, чем сервер: у anidub рабочий UA — именно
+    Firefox, на Chrome-CDN отвечает 403. Если брать только общие заголовки
+    по адресу, этот UA теряется, и замер громкости молча не срабатывает
+    (человек видит «замер не удался» без причины).
+    """
+    headers = dict(getattr(session.stream, "headers", None) or {})
+    for name, value in _referer_headers(url).items():
+        headers.setdefault(name, value)
+    return headers
+
+
+def _ffmpeg_exe() -> str | None:
+    """Путь к ffmpeg. Без него замер громкости не запустится.
+
+    `measure()` первым аргументом после адреса ждёт именно исполняемый
+    файл, а не заголовки — раньше сюда приезжал словарь, и ffmpeg падал
+    ещё до запуска (`expected str, bytes or os.PathLike object, not dict`).
+    """
+    from ..core.ffmpeg_bin import find_ffmpeg  # noqa: PLC0415
+
+    return find_ffmpeg()
 
 
 def _referer_headers(url: str) -> dict[str, str]:

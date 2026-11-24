@@ -127,7 +127,7 @@ class OkRuSource(YtDlpSource):
             raise last
         return extract_info(url, format="all")
 
-    def resolve(self, url: str) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:  # noqa: ARG002
         info = self._extract(url)
 
         if info.get("is_live"):

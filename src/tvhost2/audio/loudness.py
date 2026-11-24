@@ -111,6 +111,26 @@ class Loudness:
         """Звук внутри себя скачет: тихие сцены и резкие взрывы."""
         return self.lra > DYNAMIC_LRA
 
+    def as_dict(self) -> dict[str, float | str]:
+        """То, что отдаётся в интернет и в интерфейс.
+
+        Поля названы так, как их уже читают панель и игровой плеер:
+        `gainDb` — панель (`data.get("gainDb")`), `gainLinear` — плеер
+        (`d.gainLinear`). Раньше этого метода не было вовсе, и `/loudness`
+        отвечал 500 «expected str, bytes or os.PathLike object, not dict»:
+        нормализация не работала ни разу, просто никто не нажимал кнопку
+        при включённом журнале. Нашлось при включении mypy в CI.
+        """
+        return {
+            "gainDb": self.gain_db,
+            "gainLinear": self.gain_linear,
+            "lufs": round(self.lufs, 1),
+            "lra": round(self.lra, 1),
+            "peakDbfs": round(self.peak_dbfs, 1),
+            "dynamic": self.is_dynamic,
+            "note": self.describe(),
+        }
+
     def describe(self) -> str:
         """Короткое объяснение для интерфейса."""
         if abs(self.gain_db) < 1.0:
@@ -132,8 +152,21 @@ def measure(url: str, ffmpeg_exe: str, headers: dict[str, str] | None = None) ->
     просто не нормализует, а не падает.
     """
     cmd = [ffmpeg_exe, "-hide_banner", "-nostats"]
-    for name, value in (headers or {}).items():
-        cmd += ["-headers", f"{name}: {value}\r\n"]
+    # Заголовки выставляются ДВУМЯ разными ключами, и это не дублирование:
+    #   -user_agent  — только User-Agent. Без него ffmpeg представляется
+    #                  как "Lavf/…", и CDN anivids сразу отвечает 403.
+    #   -headers     — всё остальное (Referer и прочее) ОДНИМ блоком.
+    #                  Повторённый `-headers` ffmpeg не складывает, а
+    #                  перезаписывает: из нескольких строк выживала только
+    #                  последняя. Раньше терялся как раз Referer.
+    if headers:
+        agent = headers.get("User-Agent", "")
+        if agent:
+            cmd += ["-user_agent", agent]
+        rest = {name: value for name, value in headers.items() if name != "User-Agent"}
+        if rest:
+            block = "".join(f"{name}: {value}\r\n" for name, value in rest.items())
+            cmd += ["-headers", block]
     cmd += [
         "-t",
         str(SAMPLE_SECONDS),
