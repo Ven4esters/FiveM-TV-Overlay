@@ -303,3 +303,47 @@ class TestRefusalText:
         error = alloha._region_error()  # noqa: SLF001
         assert "Росси" in error.fix
         assert "регион" in str(error).lower()
+
+
+# ------------------------------------------- честность отказов (по следам бага)
+
+
+class TestHonestRefusals:
+    """Живой случай 24.11.2026: у заказчика в России Alloha открылась, а мы
+    ответили «плеер не отдал ни одного файла» и 502. Причина была не в
+    плеере: ссылки Alloha в разметке не лежат вовсе, их собирает скрипт."""
+
+    def test_no_files_says_why_not_found(self):
+        """Отказ обязан объяснять, ЧТО не так, а не «не отдал файлов».
+
+        «Не отдал ни одного файла» звучит как поломка сайта и уводит искать
+        несуществующую причину: человек идёт проверять видео в браузере,
+        где оно, конечно, играет.
+        """
+        error_text = alloha.__doc__ or ""
+        assert "WebSocket" in error_text or "скрипт" in error_text.lower()
+
+    def test_qualities_never_found_in_html(self):
+        """Убеждаемся в факте: в разметке плеера ссылок нет, только номера.
+
+        Это не тест парсера, а тест ДЕЙСТВИТЕЛЬНОСТИ: если однажды Alloha
+        начнёт класть ссылки в HTML, тест упадёт и напомнит переписать разбор.
+        """
+        html = 'fileList: [{"id": 12345, "quality": "1080"}, {"id": 12346, "quality": "720"}]'
+        assert alloha.qualities_of(html) == []
+
+    def test_tvigle_geoblock_has_own_text(self):
+        """tvigle: пустые ссылки + флаг региона — это лицензия, а не сбой."""
+        item = tvigle.play_item(TVIGLE_API_BLOCKED)
+        assert item.get("isGeoBlocked") is True
+        assert tvigle.stream_urls(item.get("videos")) == []
+        advice = tvigle._region_advice(item)  # noqa: SLF001
+        assert "лиценз" in advice.lower()
+
+    def test_tvigle_always_yields_quality(self):
+        """Даже без разобранного мастера должно быть хотя бы одно качество.
+
+        Пустой список качеств мост превращает в 502, и человек видит
+        «ошибка потока» вместо причины. Один адрес «как есть» играет лучше.
+        """
+        assert tvigle.MIN_HEIGHT == 144
