@@ -26,12 +26,21 @@ from .api import Api
 from .panel import Panel
 
 
-def _start_server(host: str, port: int) -> None:
-    """Поднять прокси в фоновом потоке того же процесса."""
+def _start_server(host: str, port: int):
+    """Поднять прокси в фоновом потоке того же процесса.
+
+    Возвращает сервер: закрывать его обязано вызывающее. Если этого не
+    сделать, при закрытии окна поток продолжает жить, а Qt уже разрушил
+    объекты — процесс падает с `pure virtual method called`. Раньше падало
+    ровно так: окно закрывалось, а в консоли оставался трейсбек.
+    """
     from ..web.server import serve  # noqa: PLC0415
 
     server = serve(host, port)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    server._worker = worker  # чтобы дождаться при остановке
+    return server
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,12 +64,27 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("FiveM Video Overlay")
     app.setStyleSheet(theme.stylesheet())
 
+    httpd = None
     if args.serve:
-        _start_server(args.listen, args.port)
+        httpd = _start_server(args.listen, args.port)
 
     panel = Panel(api=Api(base=f"http://127.0.0.1:{args.port}"))
     panel.show()
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        # Останавливаем прокси ДО разрушения интерфейса. Иначе поток сервера
+        # продолжает работать с уже удалёнными объектами Qt — это и давало
+        # «pure virtual method called» при закрытии окна.
+        if httpd is not None:
+            # shutdown() просит цикл остановиться, но НЕ ждёт его. Без join
+            # поток продолжает жить, пока Python разрушает интерпретатор —
+            # отсюда «pure virtual method called» и трейсбек при закрытии.
+            httpd.shutdown()
+            worker = getattr(httpd, "_worker", None)
+            if worker is not None:
+                worker.join(timeout=5)
+            httpd.server_close()
 
 
 if __name__ == "__main__":

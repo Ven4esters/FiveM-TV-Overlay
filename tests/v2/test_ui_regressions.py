@@ -138,3 +138,41 @@ def test_ui_entry_point_accepts_serve_flag() -> None:
     source = inspect.getsource(entry.main)
     assert "--serve" in source
     assert "--port" in source
+
+
+def test_serve_mode_stops_server_on_exit() -> None:
+    """Прокси в режиме --serve останавливается и поток дожидается.
+
+    Прокси живёт в фоновом потоке. Если не остановить его перед закрытием
+    окна, поток обращается к уже разрушенным объектам Qt: в консоли
+    «pure virtual method called», процесс падает с трейсбеком. Тест
+    проверяет механику остановки: shutdown + join + закрытие сокета.
+    """
+    import time
+
+    from tvhost2.ui.__main__ import _start_server
+
+    port = 9403
+    httpd = _start_server("127.0.0.1", port)
+    worker = getattr(httpd, "_worker", None)
+    assert worker is not None and worker.is_alive(), "поток сервера не запустился"
+
+    # Сервер реально отвечает, пока работает
+    import urllib.request
+
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
+        assert response.status == 200
+
+    # Останавливаем ровно так, как это делает main()
+    httpd.shutdown()
+    worker.join(timeout=5)
+    httpd.server_close()
+
+    assert not worker.is_alive(), "поток сервера остался жить после shutdown"
+
+    # Порт освобождён: повторный запуск на нём не падает
+    time.sleep(0.2)
+    again = _start_server("127.0.0.1", port)
+    again.shutdown()
+    getattr(again, "_worker", None).join(timeout=5) if getattr(again, "_worker", None) else None
+    again.server_close()
