@@ -66,18 +66,23 @@ class TestFileList:
     def test_meta_found(self) -> None:
         assert alloha_bnsi.meta_of(PLAYER_HTML).startswith("WF1ENlE6")
 
-    def test_active_id_goes_first(self) -> None:
-        """Первым — `active.id`, а не `id_file` и не «первое число в тексте».
+    def test_active_id_file_goes_first(self) -> None:
+        """Первым — `active.id_file`, затем `active.id`.
 
-        На живом образце `active.id` был 1836882, а `id_file` — 1836464;
-        в запрос идёт именно `id`.
+        Раньше считалось иначе («в запрос идёт `id`»), и это оказалось
+        ошибкой: настоящий запрос браузера (curl.txt, 24.11.2026) идёт на
+        `/bnsi/movies/1836464`, а это ровно `active.id_file`. Из-за прежнего
+        порядка этот номер не проверялся вообще — ни в одной из шести попыток.
         """
         ids = alloha_bnsi.file_ids(PLAYER_HTML)
-        assert ids[0] == "1836882"
+        assert ids[:2] == ["1836464", "1836882"]
 
-    def test_no_null_ids(self) -> None:
-        """`id_file: null` не попадает в список: с null в адресе делать нечего."""
-        assert "1836464" not in alloha_bnsi.file_ids(PLAYER_HTML)
+    def test_null_ids_skipped(self) -> None:
+        """`id_file: null` в список не попадает, а непустые — попадают все."""
+        ids = alloha_bnsi.file_ids(PLAYER_HTML)
+        assert "None" not in ids
+        assert "null" not in ids
+        assert len(ids) == len(set(ids)), "номера не повторяются"
 
     def test_asked_translation_first_after_active(self) -> None:
         """Сразу за активным — тот же эпизод ЗАПРОШЕННОЙ озвучки.
@@ -89,7 +94,8 @@ class TestFileList:
         """
         embed = "https://tories-as.stravers.live/?token_movie=x&translation=96&season=1&episode=1"
         ids = alloha_bnsi.file_ids(PLAYER_HTML, embed)
-        assert ids[:2] == ["1836882", "1847894"]
+        assert ids[0] == "1836464", "сначала активный id_file"
+        assert "1847894" in ids[:4], "сразу в начале и файл запрошенной озвучки"
 
 
 class TestRealPageSample:
@@ -116,20 +122,29 @@ class TestRealPageSample:
             "&translation=96&season=1&episode=1"
         )
         ids = alloha_bnsi.file_ids(player, embed)
-        assert ids[:2] == ["1836882", "1847894"]
+        assert ids[0] == "1836464"
+        assert "1847894" in ids[:4]
         assert "1836402" in ids, "файлы остальных озвучек остаются как запасные"
 
     def test_other_translations_differ(self, player: str) -> None:
-        """У каждой озвучки свой id того же эпизода — это и есть причина провала."""
+        """Файл серии 1 запрошенной озвучки стоит в начале перебора.
 
-        def first_after_active(tr: str) -> str:
+        Порядок после правки: (1) `active.id_file` — его просит браузер,
+        (2) `active.id`, дальше файлы запрошенной озвучки. Для озвучки 93
+        активный файл уже из неё, поэтому «файл серии 1» стоит на другом
+        месте — проверяем вхождение в начало, а не жёсткий индекс.
+        """
+
+        def early_ids(tr: str) -> list[str]:
             embed = f"https://x/?token_movie=x&translation={tr}&season=1&episode=1"
-            return alloha_bnsi.file_ids(player, embed)[1]
+            return alloha_bnsi.file_ids(player, embed)[:5]
 
-        assert first_after_active("96") == "1847894"
-        assert first_after_active("338") == "1836402"
-        assert first_after_active("241") == "1831135"
-        assert first_after_active("93") == "1836787"
+        assert "1847894" in early_ids("96")
+        assert "1836402" in early_ids("338")
+        assert "1831135" in early_ids("241")
+        assert "1836787" in early_ids("93")
+        # у всех озвучек порядок один: сначала id_file, потом id активного файла
+        assert early_ids("96")[:2] == ["1836464", "1836882"]
 
     def test_kind_defaults_to_serial(self) -> None:
         assert alloha_bnsi.kind_of(PLAYER_HTML) == "serial"
@@ -295,7 +310,7 @@ class TestVariants:
         monkeypatch.setattr(alloha_bnsi, "_post_form", no_answer)
         monkeypatch.setattr(alloha_bnsi, "_post_json", no_answer)
         rows = alloha_bnsi.try_variants("https://x.live/?token=abc", PLAYER_HTML)
-        assert {row["id"] for row in rows} == {"1836882", "1847894"}
+        assert {row["id"] for row in rows} == {"1836464", "1836882"}
 
     def test_no_ids_is_not_a_crash(self, monkeypatch: pytest.MonkeyPatch) -> None:
         def no_answer(url: str, payload: dict, headers: dict[str, str]) -> tuple[int, str]:
@@ -643,3 +658,81 @@ class TestFormPayload:
         )
         alloha_bnsi.attempts(self.EMBED, page)
         assert sent and all(item.get("_ref") == "s1.1795638751_abc.def" for item in sent)
+
+
+class TestBrowserTruth:
+    """Настоящий запрос браузера заказчика (curl.txt от 24.11.2026, Firefox).
+
+    Два открытия, которые сломали прежние догадки:
+
+      1. Браузер просил `/bnsi/movies/1836464` — это `active.id_file`,
+         а не `active.id` (1836882). Мы слали `id` и этот номер вообще
+         не проверяли.
+      2. `Borth` браузера = `d07bc5a1…`, и это НЕ `sha256(User-Agent)`
+         (для того же Firefox он 4e224c69…). Первая половина считается
+         от canvas/WebGL/аудио, как и было в расшифровке `c0`.
+    """
+
+    CURL = (
+        "curl.exe ^\"https://tories-as.stravers.live/bnsi/movies/1836464^\" ^\n"
+        "  --compressed ^\n"
+        "  -X POST ^\n"
+        '  -H ^"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0)'
+        ' Gecko/20100101 Firefox/160.0^" ^\n'
+        '  -H ^"Borth: d07bc5a1ca5840c001b152adaa937e86a48b74e77eded89a18395a0f'
+        '314bc33f^|aEpHM005ZzRUekF8MTc5NTU1MzA4Nnw2ZGNzNDd5ZmRrc2hfSzU3Ymh2S3dUeFJ'
+        'MU0lKelphS0tUSl9pcVlQLTdJ^" ^\n'
+        '  -H ^"X-Requested-With: XMLHttpRequest^" ^\n'
+        '  --data-raw ^"token=5286c49a9d29cad731353b68d3f1f5^&av1=true'
+        '^&autoplay=0^&_ref=s1.1795639479.383dbf8d82a5e71102059964'
+        '.aHR0cHM6Ly96bG9yZC5vcmcv^&audio=^&subtitle=^"'
+    )
+
+    def test_id_file_first(self) -> None:
+        """1876464 → первым: именно его просит браузер."""
+        embed = (
+            "https://tories-as.stravers.live/?token_movie=dc27"
+            "&translation=96&season=1&episode=1"
+        )
+        ids = alloha_bnsi.file_ids(PLAYER_HTML, embed)
+        assert ids[0] == "1836464", ids[:4]
+
+    def test_borth_taken_from_curl(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        folder = tmp_path / "alloha_check"
+        folder.mkdir()
+        (folder / "curl.txt").write_text(self.CURL, encoding="utf-8")
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
+        borth = alloha_bnsi.learnt_borths()[0]
+        assert "^" not in borth
+        assert len(borth) == 153
+        assert borth.split("|")[0] == (
+            "d07bc5a1ca5840c001b152adaa937e86a48b74e77eded89a18395a0f314bc33f"
+        )
+
+    def test_borth_is_not_sha256_of_ua(self) -> None:
+        import hashlib
+
+        ua = (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) "
+            "Gecko/20100101 Firefox/160.0"
+        )
+        assert hashlib.sha256(ua.encode()).hexdigest() != (
+            "d07bc5a1ca5840c001b152adaa937e86a48b74e77eded89a18395a0f314bc33f"
+        )
+
+    def test_ref_from_curl_goes_to_payload(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        folder = tmp_path / "alloha_check"
+        folder.mkdir()
+        (folder / "curl.txt").write_text(self.CURL, encoding="utf-8")
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
+        payload = alloha_bnsi.form_payload(
+            "https://x.live/?token=5286c49a9d29cad731353b68d3f1f5",
+            "userParam = { refToken: '' }",
+        )
+        assert payload["_ref"].startswith("s1.1795639479.")
+
+    def test_no_curl_means_no_learnt_borth(self, tmp_path, monkeypatch) -> None:
+        empty = tmp_path / "nothing"
+        empty.mkdir()
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", empty)
+        assert alloha_bnsi.learnt_borths() == []

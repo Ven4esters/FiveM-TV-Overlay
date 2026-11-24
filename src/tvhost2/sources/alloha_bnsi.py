@@ -196,6 +196,12 @@ def file_ids(player_html: str, embed: str = "") -> list[str]:
         return result
 
     active = active_file(player_html)
+    # ПЕРВЫМ — `id_file`, а не `id`. Это выяснилось из настоящего запроса
+    # браузера (curl.txt от 24.11.2026): страница просила серию 1 озвучки 96,
+    # а плеер запросил `/bnsi/movies/1836464`, и это ровно `active.id_file`
+    # (файл t338 шестой серии), а не `active.id` (1836882). Раньше мы слали
+    # `active.id` и этот номер вообще не проверяли.
+    add(active.get("id_file"))
     add(active.get("id"))
     active_id = str(active.get("id") or "")
 
@@ -217,18 +223,29 @@ def file_ids(player_html: str, embed: str = "") -> list[str]:
 
     ordered = sorted(files, key=lambda item: key_of(item[0]))
 
+    def add_all(selector: Any) -> None:
+        """Добавить `id_file` (и `id`) всех файлов, подходящих под условие."""
+        for path, node in ordered:
+            if selector(path):
+                add(node.get("id_file"))
+                add(node.get("id"))
+
     # 2) та же серия в запрошенной озвучке
     if wanted_key:
-        for path, node in ordered:
-            if key_of(path)[:2] == (season, episode) and _translation_key(path) == wanted_key:
-                add(node.get("id"))
+        add_all(lambda path: key_of(path)[:2] == (season, episode)
+                and _translation_key(path) == wanted_key)
         # 3) первая серия запрошенной озвучки
         for path, node in ordered:
             if _translation_key(path) == wanted_key:
                 add(node.get("id"))
                 break
     # 4) всё остальное, запрошенная озвучка раньше прочих
+    def preferred(path: tuple[str, ...]) -> bool:
+        return bool(wanted_key) and _translation_key(path) == wanted_key
+
+    add_all(preferred)
     for _, node in ordered:
+        add(node.get("id_file"))
         add(node.get("id"))
     return result
 
@@ -392,6 +409,12 @@ def form_payload(embed: str, player_html: str) -> dict[str, Any]:
         "autoplay": 0,
     }
     ref = ref_token_of(player_html)
+    if not ref:
+        # В странице пусто — берём подпись из нашего `curl.txt`: сервер их
+        # выдаёт и обновляет каждый час, но и старая ещё принимается
+        # (браузер сам её раз в час меняет, а не при каждом запросе).
+        learnt = learnt_ref_tokens()
+        ref = learnt[0] if learnt else ""
     if ref:
         payload["_ref"] = ref
     return payload
@@ -405,7 +428,8 @@ def attempts(embed: str, player_html: str) -> list[dict[str, Any]]:
     «контент не найден» невозможно понять, дело в номере файла, в регионе
     или в чём-то третьем, а по списку из шести попыток — видно.
     """
-    borth = borth_for(player_html)
+    learnt = learnt_borths()
+    borth = learnt[0] if learnt else borth_for(player_html)
     kind = kind_of(player_html)
     ids = file_ids(player_html, embed)
     result: list[dict[str, Any]] = []
@@ -721,6 +745,40 @@ def _ref_values(from_page: str) -> list[str]:
         if item and item not in values:
             values.append(item)
     return values[:3]
+
+
+def learnt_borths() -> list[str]:
+    """Настоящие `Borth` из нашего же `curl.txt` — с машины заказчика.
+
+    Почему это важно: первая половина `Borth` считается не от User-Agent.
+    Проверено на настоящем запросе браузера (24.11.2026, Firefox):
+
+        Borth: d07bc5a1ca5840c001b152adaa937e86a48b74e77eded89a18395a0f314bc33f|…
+        sha256(User-Agent Firefox)          = 4e224c69…
+        uap из /sarn (тот же User-Agent)    = e82f2e5b…
+        Accepts-Controls из HAR заказчика   = d07bc5a1…  ← совпало с Borth
+
+    То есть первая половина — это отпечаток canvas/WebGL/аудио (как и
+    разбирали в `c0`), а не хеш UA. Из Python его не воспроизвести, зато
+    можно взять готовым из `curl.txt`: там он настоящий и рабочий.
+    """
+    found: list[str] = []
+    for name in ("curl.txt", "curl", "bnsi.txt"):
+        path = CHECK_DIR / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in re.finditer(r"""Borth:\s*([^"'\\\r\n]{40,})""", text, re.IGNORECASE):
+            # В cmd-варианте `Copy as cURL` экранируются и `^"`, и `^|`:
+            # в захваченной строке остаётся `^` прямо перед `|`. В самом
+            # значении заголовка `^` не бывает — вычищаем его весь.
+            value = match.group(1).replace("^", "").strip()
+            if value and value not in found:
+                found.append(value)
+    return found
 
 
 def learnt_ref_tokens() -> list[str]:
