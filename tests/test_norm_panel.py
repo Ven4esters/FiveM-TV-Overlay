@@ -21,10 +21,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 # роняет ВСЮ сессию на сборе тестов, а не пропускает один модуль.
 # Именно так CI и краснел: «Interrupted: 1 error during collection» за две
 # секунды, без единого запущенного теста.
-try:
-    from PySide6.QtWidgets import QApplication  # noqa: E402
-except ImportError as exc:
-    pytest.skip(f"Qt без системных библиотек: {exc}", allow_module_level=True)
+from tests.qt_support import qt_widgets  # noqa: E402
+
+QApplication = qt_widgets()
 
 
 @pytest.fixture(scope="module")

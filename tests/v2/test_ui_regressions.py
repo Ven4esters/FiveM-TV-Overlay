@@ -13,14 +13,14 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-PySide6 = pytest.importorskip("PySide6")
+from tests.qt_support import qt_widgets
+
+QApplication = qt_widgets()
 
 
 @pytest.fixture(scope="module")
 def app() -> object:
     """Одно QApplication на модуль: второй экземпляр Qt не переживает."""
-    from PySide6.QtWidgets import QApplication
-
     return QApplication.instance() or QApplication([])
 
 
