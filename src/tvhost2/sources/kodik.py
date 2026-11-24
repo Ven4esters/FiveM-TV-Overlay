@@ -340,7 +340,14 @@ class KodikSource:
     def matches(self, url: str) -> bool:
         return parse_player_url(url) is not None
 
-    def resolve(self, url: str) -> Stream:
+    def resolve(self, url: str, translation_index: int = 0) -> Stream:
+        """Разобрать ссылку. translation_index — какая озвучка нужна.
+
+        У Kodik каждая озвучка — отдельный поток со своим hash, поэтому
+        «переключить дорожку» нельзя: нужен повторный запрос /ftor с hash
+        выбранной озвучки. Индекс, а не id: так вызывающему коду не надо
+        знать про hash вообще.
+        """
         ref = parse_player_url(url)
         if ref is None:
             raise SourceFailedError(
@@ -353,7 +360,24 @@ class KodikSource:
         player_url = f"https://{ref.host}/{ref.kind}/{ref.video_id}/{ref.hash}/720p"
         html = _http(player_url)
         translations = parse_translations(html)
-        links = fetch_links(ref)
+
+        # Выбранная озвучка: у неё свой hash, и /ftor надо спрашивать по нему.
+        # Если индекс вне списка — берём ту, что плеер выбрал сам (selected),
+        # иначе первую.
+        chosen = ref
+        if translations:
+            index = translation_index if 0 <= translation_index < len(translations) else 0
+            if not 0 <= translation_index < len(translations):
+                index = next((i for i, t in enumerate(translations) if t.get("selected")), 0)
+            track = translations[index]
+            chosen = KodikRef(
+                kind=str(track.get("type") or ref.kind),
+                video_id=str(track.get("media_id") or ref.video_id),
+                hash=str(track.get("hash") or ref.hash),
+                quality=ref.quality,
+                host=ref.host,
+            )
+        links = fetch_links(chosen)
 
         qualities: list[Quality] = []
         for height_text, items in links.items():
