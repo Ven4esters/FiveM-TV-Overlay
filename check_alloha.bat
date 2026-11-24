@@ -4,8 +4,9 @@ REM  Проверка Alloha: пройти цепочку плеера и пок
 REM
 REM  Зачем отдельный файл: обычный `python -m tvhost2.alloha_check` не
 REM  работает, если пакет не установлен в Python — он лежит в src\, и Python
-REM  про него не знает. Здесь всё уже настроено: берётся окружение проекта
-REM  (.venv) и PYTHONPATH указывает на src\ — так же, как в start.bat.
+REM  про него не знает. Здесь всё уже настроено: PYTHONPATH указывает на src\.
+REM  Берётся окружение проекта (.venv), а если его нет — обычный Python из
+REM  установки Windows: диагностике не нужны библиотеки проекта.
 REM
 REM  Запуск: дважды щёлкнуть по этому файлу (спросит ссылку) либо
 REM          check_alloha.bat "https://zlord.org/....html"
@@ -19,8 +20,19 @@ title Проверка Alloha
 
 set "VENV_PY=.venv\Scripts\python.exe"
 
-REM --- 1. Окружение проекта ---
-if not exist "%VENV_PY%" goto NO_VENV
+REM --- 1. Чем запускать ---
+REM --- Python: сначала окружение проекта, иначе системный ---
+REM     Диагностика живёт только на стандартной библиотеке, поэтому .venv ей
+REM     не обязателен: хватает обычного Python 3.10+ из установки Windows.
+set "PY="
+if exist "%VENV_PY%" set "PY=%VENV_PY%"
+if not defined PY (
+    python -c "import sys; sys.exit(sys.version_info < (3, 10))" >nul 2>&1
+    if not errorlevel 1 set "PY=python"
+)
+if defined PY goto HAVE_PY
+goto NO_PY
+:HAVE_PY
 
 REM --- 2. Ссылка: из аргумента или спросить ---
 set "LINK=%~1"
@@ -36,7 +48,7 @@ echo.
 
 REM --- 3. Запуск диагностики ---
 set "PYTHONPATH=%~dp0src"
-"%VENV_PY%" -m tvhost2.alloha_check "%LINK%"
+"%PY%" -m tvhost2.alloha_check "%LINK%"
 set "RESULT=%errorlevel%"
 
 echo.
@@ -51,13 +63,17 @@ pause
 endlocal
 exit /b 0
 
-:NO_VENV
+:NO_PY
 echo.
-echo [ОШИБКА] Не нахожу окружение проекта: %VENV_PY%
+echo [ОШИБКА] Не нахожу Python 3.10 или новее.
 echo.
-echo Это значит, что приложение ещё ни разу не запускалось из этой папки.
-echo Что делать: запустите start.bat — он создаст .venv и поставит зависимости,
-echo после этого вернитесь к этому файлу.
+echo Диагностике не нужны библиотеки проекта — достаточно обычного Python.
+echo 1. Откройте https://www.python.org/downloads/ и установите Python 3.12.
+echo 2. При установке ОБЯЗАТЕЛЬНО поставьте галочку "Add python.exe to PATH".
+echo 3. Закройте это окно и запустите файл снова.
+echo.
+echo Если Python уже есть, но Windows его не видит — запустите start.bat:
+echo он найдёт Python сам и заодно создаст .venv.
 echo.
 pause
 endlocal

@@ -418,3 +418,58 @@ class TestReplayCurl:
         captured = alloha_replay.parse_curl(self.CURL)
         lines = "\n".join(alloha_replay.differences(captured))
         assert "Borth" in lines
+
+
+class TestReplayFidelity:
+    """«Один в один» — это про регистр, порядок и отсутствие лишнего."""
+
+    CURL = (
+        "curl 'https://x.live/bnsi/movies/1' "
+        "-H 'accept: */*' "
+        "-H 'borth: ABC|DEF' "
+        "-H 'user-agent: Mozilla/5.0 Test' "
+        "--data-raw 'token=1&av1=false'"
+    )
+
+    def test_header_order_and_case_kept(self) -> None:
+        from tvhost2 import alloha_replay
+
+        lines = alloha_replay.header_lines(alloha_replay.parse_curl(self.CURL))
+        assert lines[0] == "Host: x.live"
+        assert lines[1] == "accept: */*"
+        assert lines[2] == "borth: ABC|DEF", "регистр имени менять нельзя"
+        assert lines[-1] == f"Content-Length: {len(b'token=1&av1=false')}"
+        assert not any(line.lower().startswith("connection:") for line in lines)
+
+    def test_gzip_response_is_read(self) -> None:
+        import gzip
+
+        from tvhost2 import alloha_replay
+
+        payload = b'{"hlsSource":[]}'
+        packed = gzip.compress(payload)
+        assert alloha_replay.decompress(packed, "gzip") == (payload, "")
+
+    def test_broken_gzip_does_not_crash(self) -> None:
+        from tvhost2 import alloha_replay
+
+        data, note = alloha_replay.decompress(b"not gzip at all", "gzip")
+        assert data == b"not gzip at all"
+        assert "gzip" in note
+
+    def test_unknown_encoding_is_reported(self) -> None:
+        from tvhost2 import alloha_replay
+
+        data, note = alloha_replay.decompress(b"abc", "br")
+        assert data == b"abc"
+        assert "br" in note
+
+    def test_notepad_unicode_file_is_read(self, tmp_path) -> None:
+        """Старый Блокнот сохраняет «Unicode» — это UTF-16 с BOM."""
+        from tvhost2 import alloha_replay
+
+        path = tmp_path / "curl.txt"
+        path.write_bytes(self.CURL.encode("utf-16"))
+        captured = alloha_replay.parse_curl(alloha_replay._read_text(path))
+        assert captured.url.endswith("/bnsi/movies/1")
+        assert captured.body == b"token=1&av1=false"

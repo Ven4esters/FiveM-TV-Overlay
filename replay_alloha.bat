@@ -8,7 +8,8 @@ REM  Как получить запрос:
 REM    F12 -> Network -> фильтр «bnsi» -> правой кнопкой по запросу
 REM    -> Copy -> Copy as cURL.  Вставить в alloha_check\curl.txt
 REM
-REM  Окружение проекта (.venv) и PYTHONPATH=src — как в start.bat.
+REM  Нужен только Python 3.10+ и PYTHONPATH=src: окружение проекта (.venv)
+REM  берётся, если есть, иначе — обычный Python из установки Windows.
 REM ============================================================================
 chcp 65001 >nul 2>&1
 setlocal EnableExtensions
@@ -18,7 +19,20 @@ cd /d "%~dp0"
 title Повтор запроса Alloha
 
 set "VENV_PY=.venv\Scripts\python.exe"
-if not exist "%VENV_PY%" goto NO_VENV
+
+REM --- Чем запускать ---
+REM --- Python: сначала окружение проекта, иначе системный ---
+REM     Диагностика живёт только на стандартной библиотеке, поэтому .venv ей
+REM     не обязателен: хватает обычного Python 3.10+ из установки Windows.
+set "PY="
+if exist "%VENV_PY%" set "PY=%VENV_PY%"
+if not defined PY (
+    python -c "import sys; sys.exit(sys.version_info < (3, 10))" >nul 2>&1
+    if not errorlevel 1 set "PY=python"
+)
+if defined PY goto HAVE_PY
+goto NO_PY
+:HAVE_PY
 
 if not exist "alloha_check\curl.txt" (
     echo.
@@ -42,7 +56,7 @@ echo ============================================================
 echo.
 
 set "PYTHONPATH=%~dp0src"
-"%VENV_PY%" -m tvhost2.alloha_replay "alloha_check\curl.txt"
+"%PY%" -m tvhost2.alloha_replay "alloha_check\curl.txt"
 set "RESULT=%errorlevel%"
 
 echo.
@@ -57,10 +71,18 @@ pause
 endlocal
 exit /b 0
 
-:NO_VENV
+:NO_PY
 echo.
-echo [ОШИБКА] Не нахожу окружение проекта: %VENV_PY%
-echo Запустите start.bat — он создаст .venv и поставит зависимости.
+echo [ОШИБКА] Не нахожу Python 3.10 или новее.
+echo.
+echo Диагностике не нужны библиотеки проекта — достаточно обычного Python.
+echo 1. Откройте https://www.python.org/downloads/ и установите Python 3.12.
+echo 2. При установке ОБЯЗАТЕЛЬНО поставьте галочку "Add python.exe to PATH".
+echo 3. Закройте это окно и запустите файл снова.
+echo.
+echo Если Python уже есть, но Windows его не видит — запустите start.bat:
+echo он найдёт Python сам и заодно создаст .venv.
 echo.
 pause
+endlocal
 exit /b 1
