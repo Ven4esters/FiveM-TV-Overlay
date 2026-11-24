@@ -8,7 +8,7 @@
 
 ЗАПУСК (нужен только Python 3.9+, ничего ставить не надо):
 
-    python3 tools/alloha/probe_bnsi.py "https://zlord.org/ссылка-на-страницу.html"
+    python tools/alloha/probe_bnsi.py "https://zlord.org/ссылка-на-страницу.html"
 
 Скрипт сам:
   1. найдёт на странице встройку Alloha и токен сайта;
@@ -185,10 +185,28 @@ def guard(embed: str) -> str:
         return ""
 
 
+def _usage() -> None:
+    """Короткая подсказка вместо простыни.
+
+    Важно: выходим с кодом 0. При ненулевом коде окно консоли на Windows
+    закрывается мгновенно (если запускать двойным щелчком), и человек не
+    успевает прочитать, что не так.
+    """
+    print(__doc__)
+    print("\nПример (на Windows — python, без цифры 3):")
+    print('  python tools/alloha/probe_bnsi.py "https://zlord.org/17222-...html"')
+
+
 def main() -> None:
     if len(sys.argv) < 2:
-        raise SystemExit(__doc__)
+        _usage()
+        return
     page_url = sys.argv[1].strip()
+    if not page_url.startswith("http"):
+        print(f"Это не ссылка: {page_url!r}")
+        print("Нужен адрес страницы с видео, целиком, в кавычках.")
+        _usage()
+        return
     OUT.mkdir(exist_ok=True)
 
     embed, token, kp = find_embed(page_url)
@@ -254,6 +272,15 @@ def main() -> None:
             "\nНи один запрос не отдал hlsSource. Это значит, что и с этого адреса "
             "плеер закрыт — пришлите summary.txt, посмотрю коды ответов."
         )
+    _pause()
+
+
+def _pause() -> None:
+    """Дать прочитать вывод, если окно запущено двойным щелчком."""
+    try:
+        input("\nГотово. Нажмите Enter, чтобы закрыть окно… ")
+    except (EOFError, KeyboardInterrupt):
+        pass
 
 
 def _fingerprint() -> str:

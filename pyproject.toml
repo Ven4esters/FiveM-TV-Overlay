@@ -118,6 +118,10 @@ max-complexity = 15
 "src/tvhost/core/*.py" = ["PLR2004", "PLC0415", "PTH118", "PTH123", "PTH100", "PTH110", "PTH120", "S110", "SIM105", "ARG002", "RET502", "RET503", "RET504", "PLW0603", "PLR0917", "B904", "PLR0912", "PLR0911", "UP031", "PLW1510"]
 "src/tvhost/web/*.py" = ["PLR2004", "PLC0415", "PTH118", "PTH123", "S110", "SIM105", "E501", "RET503", "ARG002", "ARG001"]
 "src/tvhost/__main__.py" = ["T201"]
+# Диагностика Alloha (`python -m tvhost2.alloha_check`) — это CLI для
+# заказчика: печать в консоль — её интерфейс, а не отладочный вывод.
+# Ветки линейные (шаг 1 → 2 → 3), поэтому порог по числу операторов снят.
+"src/tvhost2/alloha_check.py" = ["T201", "PLR0915", "SLF001"]
 
 [tool.ruff.format]
 quote-style = "double"
