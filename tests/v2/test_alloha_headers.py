@@ -24,9 +24,7 @@ from tvhost2.web.server import _ALLOHA_PLAYER_ORIGIN, _referer_headers
 class TestAllohaHeaders:
     def test_cdn_gets_player_origin(self) -> None:
         """`Origin` обязателен именно доменом плеера — CDN и сайт дают 403."""
-        headers = _referer_headers(
-            "https://0a-2e-7c-r400.userplay.live/1/abc123/master.m3u8"
-        )
+        headers = _referer_headers("https://0a-2e-7c-r400.userplay.live/1/abc123/master.m3u8")
         assert headers == {"Origin": "https://tories-as.stravers.live"}
 
     def test_segments_and_sublists_too(self) -> None:
@@ -43,7 +41,5 @@ class TestAllohaHeaders:
 
     def test_other_hosts_untouched(self) -> None:
         """Правило не протекает на другие источники."""
-        assert _referer_headers("https://rutube.ru/x.m3u8") == {
-            "Referer": "https://rutube.ru/"
-        }
+        assert _referer_headers("https://rutube.ru/x.m3u8") == {"Referer": "https://rutube.ru/"}
         assert _referer_headers("https://example.com/x.m3u8") == {}

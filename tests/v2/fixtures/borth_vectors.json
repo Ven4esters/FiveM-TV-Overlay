@@ -1,0 +1,62 @@
+[
+ {
+  "input": "WF1ENlE65P2xzcoY0EFD0wtVzmV10kWn0X1TJ1UxpJZFdlZy8yUyuRIHScYLXF2mETTzHUnHMcQeQNdNNMNUbMba",
+  "i_s": "abbMNMNUMcQeQNdNScYLXF2mETTzHUnHzmV10kWn0X1TJ1UxpJZFdlZy8yUyuRIHWF1ENlE65P2xzcoY0EFD0wtV",
+  "i_r": "VaJb1b1McNUMENxUFMpcNQJeoQZNldFNwSdcEYlLYXZF62ymDE8T5Tyz0HUUPnyHtzum2VR1E0IkxWHn00WXz1FT",
+  "i_p": "TFV6a2Jybm1DbE18MTc5NTUyMzE0NHxUUUFPMnpycHNtQzJuemo2QVZRN1lEd0FINkwxSWdHcnE0Y0lWLXYzX1ZF"
+ },
+ {
+  "input": "abcdefgh",
+  "i_s": "hgefabcd",
+  "i_r": "dhagcebf",
+  "i_p": "fgdcheab"
+ },
+ {
+  "input": "abcdefghi",
+  "i_s": "ihfgbcdea",
+  "i_r": "aibhdfcge",
+  "i_p": "edaficbgh"
+ },
+ {
+  "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "i_s": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "i_r": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "i_p": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+ },
+ {
+  "input": "u8jzPde0IgxLd6GncfBAepfJBd0Kh8oOOL8dKLzdocJ2isAjIhKtJ0RlgLKOmxgJTeKdNnFRIBXuDL7DxtpYlSXp",
+  "i_s": "pXlSxtpYIBXuDL7DgLKOmxgJTeKdNnFRBd0Kh8oOOL8dKLzdocJ2isAjIhKtJ0Rlu8jzPde0IgxLd6GncfBAepfJ",
+  "i_r": "JpKXjlLS6xztzpdYBIoBPXcuGDJLd72DpgiLeKsOnmAx0gjJATIeIKhdcNKngFtRfBJdx00KfhR8LolOeOuLd88d",
+  "i_p": "dxJ0pgKjXJjAlTLISe6IxKzhtdzcpNdKYnBgIFotBRPfXBcJudGxD0J0LKdf7h2RD8pLgoilLOeeKOsuOLndm8A8"
+ },
+ {
+  "input": "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz!\"#$%&'()*+,-./0123456789:;<=>",
+  "i_s": ">=;<789:/0123456yz!\"#$%&'()*+,-.YZ[\\]^_`abcdefghijklmnopqrstuvwx!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWX",
+  "i_r": "X>u=;;v<J7w8<9x:Q/!0=1\"2K3#4>5$6Uy%z?!&\"L#'$@%(&R')(A)**M++,B-,.WY-ZC[.\\N]/^D_0`Sa1bEc2dOe3fFg4hVi5jGk6lPm7nHo8pTq9rIs:t",
+  "i_p": "t,XB>-u,=.;W;Yv-<ZJC7[w.8\\<N9]x/:^QD/_!00`=S1a\"12bKE3c#24d>O5e$36fUFyg%4zh?V!i&5\"jLG#k'6$l@P%m(7&nRH'o)8(pAT)q*9*rMI+s+:"
+ },
+ {
+  "input": "x",
+  "i_s": "x",
+  "i_r": "x",
+  "i_p": "x"
+ },
+ {
+  "input": "",
+  "i_s": "",
+  "i_r": "",
+  "i_p": ""
+ },
+ {
+  "input": "abcde",
+  "i_s": "edbca",
+  "i_r": "aebdc",
+  "i_p": "cbade"
+ },
+ {
+  "input": "abcdefghijklmnop",
+  "i_s": "pomnijklabcdefgh",
+  "i_r": "hpaoembngicjfkdl",
+  "i_p": "lnhgpiacojefmkbd"
+ }
+]

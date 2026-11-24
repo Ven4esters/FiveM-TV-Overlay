@@ -71,3 +71,12 @@ python3 tools/alloha/deob/bnsi_probe.py
 | заголовки для CDN | `setRequestHeader('Accepts-Controls'`, `Authorizations` |
 
 Подробный разбор — `docs/REPORT_alloha_source.md`.
+
+## 5. Пробник для машины в России
+
+`tools/alloha/probe_bnsi.py` — то, что запускается у заказчика. Идёт по всей
+цепочке (страница → встройка → озвучки → плеер → `Borth` → `POST /bnsi`) и
+складывает ответы в `alloha_probe/` рядом с собой: `*.json` — тела ответов,
+`*_summary.txt` — сводка. Nod'а не требует: порт `iS/iR/iP` лежит в
+`src/tvhost2/sources/alloha_borth.py` и сверен с настоящими функциями
+фикстурой `tests/v2/fixtures/borth_vectors.json`.
