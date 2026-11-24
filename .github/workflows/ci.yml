@@ -27,6 +27,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Браузер для тестов воспроизведения
+        # Chromium нужен тестам с пометкой `browser`. Без него pytest их
+        # пропускает, а вместе с ними уходит и покрытие — 10 пунктов вниз.
+        # Ставим только браузер, без системных зависимостей: на ubuntu-latest
+        # они уже есть.
+        run: playwright install --with-deps chromium
+
       - name: Форматирование (ruff format)
         run: ruff format --check src tests
 
@@ -43,7 +50,18 @@ jobs:
         # Покрытие считается по src/tvhost2 — это нынешний код. Раньше здесь
         # стоял путь v1 (src/tvhost), которого мы не касаемся: цифра была
         # всегда про старую версию, и по ней нельзя было судить о новой.
-        run: pytest --cov=src/tvhost2 --cov-report=term --cov-report=xml
+        #
+        # Тесты с пометкой `browser` идут ОТДЕЛЬНЫМ шагом ниже: они
+        # поднимают Chromium, и от их наличия не должен зависеть порог
+        # покрытия. Раньше не было ни playwright в зависимостях, ни этого
+        # разделения — pytest.importorskip() молча выбрасывал модуль,
+        # покрытие падало с 79% до 69%, и CI краснел по непонятной причине.
+        run: pytest -m "not browser" --cov=src/tvhost2 --cov-report=term --cov-report=xml
+
+      - name: Тесты воспроизведения (Chromium)
+        # Живые проверки hls.js: играет ли видео и звук на самом деле.
+        # Не влияют на порог покрытия — их задача поймать регресс плеера.
+        run: pytest -m browser -v
 
       - name: Порог покрытия не снижен
         run: |
