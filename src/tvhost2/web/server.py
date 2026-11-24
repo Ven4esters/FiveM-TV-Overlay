@@ -410,11 +410,27 @@ class OverlayHandler(BaseHTTPRequestHandler):
         if session is None or session.stream is None:
             return self._error_playlist("сессия не найдена", 404)
         stream = session.stream
-        quality_list = [(q.height, q.width, q.bitrate_kbps, q.url) for q in stream.qualities]
-        if not quality_list:
+        if not stream.qualities:
             return self._error_playlist("у потока нет качеств", 502)
-        master = hls_bridge.build_master(quality_list, stream.audio_url)
-        # ссылки в master абсолютные — мост перепишет их сам
+        # Мастер отдаётся БРАУЗЕРУ напрямую, поэтому ссылки в нём обязаны
+        # быть уже нашими. Раньше здесь лежали сырые адреса источника
+        # «мост перепишет их сам» — но переписывать их было некому: браузер
+        # получал `file:///…` или чужой домен, и поток молча не играл.
+        quality_list = [
+            (
+                q.height,
+                q.width,
+                q.bitrate_kbps,
+                hls_bridge.proxify(q.url, f"{self.proxy_base}/stream/{sid}"),
+            )
+            for q in stream.qualities
+        ]
+        audio = (
+            hls_bridge.proxify(stream.audio_url, f"{self.proxy_base}/stream/{sid}")
+            if stream.audio_url
+            else ""
+        )
+        master = hls_bridge.build_master(quality_list, audio)
         return self._playlist(master.encode())
 
     def _bridge(self, query: dict[str, list[str]]) -> None:

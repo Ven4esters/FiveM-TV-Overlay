@@ -8,7 +8,18 @@
 
 from __future__ import annotations
 
+import socket
+
+from tvhost2.core.models import Quality, Stream, StreamKind
 from tvhost2.web import hls
+
+
+def _free_port() -> int:
+    """Свободный порт: тесты не должны падать из-за занятого 9001."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
 
 KODIK_MASTER = """#EXTM3U
 #EXT-X-VERSION:3
@@ -164,3 +175,93 @@ class TestErrorPlaylist:
 
     def test_decode_on_normal_playlist(self) -> None:
         assert hls.decode_error(KODIK_VARIANT.encode()) == ""
+
+
+class TestMasterUsesBridgeLinks:
+    """Мастер сессии не должен отдавать браузеру сырые адреса источника.
+
+    Это была настоящая поломка: `/stream/<sid>` собирал мастер с прямыми
+    ссылками CDN и полагался на «мост перепишет». Переписывать было некому —
+    мастер уходит браузеру как есть, поэтому ссылки на чужие домены (и тем
+    более file:// у склейки) просто не открывались. Внешне это выглядело как
+    «видео не играет», без единой ошибки в журнале.
+    """
+
+    def test_stream_rewrites_quality_links(self) -> None:
+        from tvhost2.web import server
+
+        session = server.STATE.sessions.create("u")
+        session.stream = Stream(
+            source="Kodik",
+            title="Тест",
+            kind=StreamKind.HLS,
+            qualities=(
+                Quality(
+                    height=720,
+                    width=1280,
+                    bitrate_kbps=2900,
+                    url="https://p12.solodcdn.com/x/720.m3u8",
+                ),
+            ),
+        )
+        try:
+            import threading
+            import urllib.request
+
+            port = _free_port()
+            httpd = server.serve("127.0.0.1", port)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            try:
+                with urllib.request.urlopen(  # noqa: S310
+                    f"http://127.0.0.1:{port}/stream/{session.sid}", timeout=10
+                ) as response:
+                    master = response.read().decode()
+            finally:
+                httpd.shutdown()
+        finally:
+            server.STATE.sessions.delete(session.sid)
+
+        # Ссылка обязана быть обёрнута в мост. Внутри url= адрес источника
+        # присутствует (закодированный) — это нормально и нужно мосту.
+        links = [line for line in master.splitlines() if line and not line.startswith("#")]
+        assert links, f"в мастере нет ссылок:\n{master}"
+        for link in links:
+            assert link.startswith("/hls?url="), f"ссылка мимо моста: {link}"
+
+    def test_stream_rewrites_local_mux_links(self) -> None:
+        """Склейка ffmpeg отдаётся как file:// — мастер обязан обернуть и её."""
+        from tvhost2.web import server
+
+        session = server.STATE.sessions.create("u")
+        session.stream = Stream(
+            source="YouTube",
+            title="Склейка",
+            kind=StreamKind.HLS,
+            qualities=(
+                Quality(
+                    height=720,
+                    width=1280,
+                    bitrate_kbps=2900,
+                    url="file:///tmp/mux/index.m3u8",
+                ),
+            ),
+        )
+        try:
+            import threading
+            import urllib.request
+
+            port = _free_port()
+            httpd = server.serve("127.0.0.1", port)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            try:
+                with urllib.request.urlopen(  # noqa: S310
+                    f"http://127.0.0.1:{port}/stream/{session.sid}", timeout=10
+                ) as response:
+                    master = response.read().decode()
+            finally:
+                httpd.shutdown()
+        finally:
+            server.STATE.sessions.delete(session.sid)
+
+        assert "file://" not in master, f"file:// утёк в браузер:\n{master}"
+        assert "/hls?url=" in master

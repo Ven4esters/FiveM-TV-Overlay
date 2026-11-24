@@ -270,14 +270,28 @@ class YouTubeSource(YtDlpSource):
                 fix="Положите ffmpeg.exe рядом с приложением",
                 state=SourceState.PARTIAL,
             )
+        # Ждём первый сегмент: до него мост отдаст пустоту, и плеер покажет
+        # ошибку раньше, чем появится картинка. Копирование потока быстрое —
+        # обычно это 2–5 секунд.
+        mux.wait_ready(muxed)
+        # ВАЖНО: адрес качества — склейка, а НЕ исходный плейлист. Если
+        # оставить исходный, ffmpeg отработает впустую, а плеер получит
+        # видео без звука: ровно ту поломку, ради которой склейка и нужна.
+        muxed_quality = Quality(
+            height=best.height,
+            width=best.width,
+            bitrate_kbps=best.bitrate_kbps,
+            url=mux.local_playlist_path(muxed),
+        )
         return Stream(
             source=self.name,
             title=(str(info.get("title") or "").strip() or "YouTube") + " (склейка)",
             # Один плейлист: его пишет ffmpeg, звук уже внутри.
             kind=StreamKind.HLS,
-            qualities=(best,),
+            qualities=(muxed_quality,),
             duration_s=0 if is_live else int(info.get("duration") or 0),
             is_live=is_live,
+            subtitles=self._subtitles(info),
             state=SourceState.PARTIAL,
         )
 

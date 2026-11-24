@@ -143,6 +143,11 @@ class SessionStore:
             session.touch()
             return session
 
+    def delete(self, sid: str) -> None:
+        """Убрать сессию. Нужен тестам и «Остановить»: ссылки CDN всё равно мертвы."""
+        with self._lock:
+            self._items.pop(sid, None)
+
     def all(self) -> list[Session]:
         with self._lock:
             self._purge_locked()
