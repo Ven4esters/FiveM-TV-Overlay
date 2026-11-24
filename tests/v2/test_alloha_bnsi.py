@@ -552,3 +552,58 @@ class TestCmdCopyAsCurl:
         assert alloha_replay._unescape_cmd("nothing special") == "nothing special"
         assert alloha_replay._unescape_cmd("a^&b") == "a&b"
         assert alloha_replay._unescape_cmd("^\"quoted^\"") == '"quoted"'
+
+
+class TestRefToken:
+    """`_ref` = `userParam.refToken`: подпись сайта-источника.
+
+    В расшифровке плеера: `userParam['refToken'] && (hf['_ref']=...)`.
+    В присланной странице пусто, а в запросе браузера заказчика — настоящее
+    значение `s1.<ts>_<24hex>.<base64(адрес страницы)>`.
+    """
+
+    FILLED = "refToken: 's1.1795636688_b9b59a5200accf9ca738b61c.aHR0cHM6Ly96bG9yZC5vcmc'"
+
+    def test_empty_in_sample_page(self) -> None:
+        assert alloha_bnsi.ref_token_of("userParam = { refToken: '', device: 0 }") == ""
+
+    def test_read_from_filled_page(self) -> None:
+        page = f'userParam = {{ {self.FILLED} }}'
+        assert alloha_bnsi.ref_token_of(page).startswith("s1.1795636688_")
+
+    def test_double_quotes_too(self) -> None:
+        page = 'userParam = { "refToken": "s1.abc_def.ghi" }'
+        assert alloha_bnsi.ref_token_of(page) == "s1.abc_def.ghi"
+
+    def test_variants_include_real_ref(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sent: list[dict] = []
+
+        def fake(url: str, payload: dict, headers: dict) -> tuple[int, str]:
+            sent.append(payload)
+            return 404, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
+        def no_json(url: str, payload: dict, headers: dict) -> tuple[int, str]:
+            return 404, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_post_json", no_json)
+        monkeypatch.setattr(alloha_bnsi, "learnt_ref_tokens", lambda: [])
+        page = f'userParam = {{ {self.FILLED} }}'
+        embed = "https://x.live/?token=5286c49a9d29cad731353b68d3f1f5"
+        alloha_bnsi.try_variants(embed, page, ["1"])
+        refs = [item.get("_ref") for item in sent if "_ref" in item]
+        expected = "s1.1795636688_b9b59a5200accf9ca738b61c.aHR0cHM6Ly96bG9yZC5vcmc"
+        assert expected in refs
+
+    def test_ref_from_curl_file(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Пользователь положил curl.txt — `_ref` оттуда тоже пробуем."""
+        folder = tmp_path / "alloha_check"
+        folder.mkdir()
+        (folder / "curl.txt").write_text(
+            "curl 'https://x/bnsi/movies/1' --data-raw "
+            "'token=1&_ref=s1.1795_abc.aHR0cHM6Ly96bG9yZC5vcmc'",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
+        values = alloha_bnsi._ref_values("")
+        assert any(v.startswith("s1.1795_abc") for v in values)

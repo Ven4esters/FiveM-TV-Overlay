@@ -32,6 +32,7 @@ import re
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from ..web.fetch import FetchError, fetch_text
@@ -427,6 +428,9 @@ def fetch_sources(embed: str, player_html: str) -> tuple[str, list[dict[str, Any
     return last_body, []
 
 
+CHECK_DIR = Path(__file__).resolve().parents[3] / "alloha_check"
+"""Куда `check_alloha.bat` и `replay_alloha.bat` кладут отчёты и `curl.txt`."""
+
 VARIANT_IDS = 2
 """Сколько номеров пробовать на каждый вариант: первый (активный) и главный."""
 
@@ -651,6 +655,22 @@ def try_variants(embed: str, player_html: str, ids: list[str] | None = None) -> 
         ),
     ]
 
+    ref_token = ref_token_of(player_html)
+
+    # Отдельная группа: `_ref`. Раньше мы его не отправляли ни разу (только
+    # пустым), а браузер заказчика шлёт настоящий. Порядок: сначала то, что
+    # нашлось в самой странице плеера, потом — накопленное из curl.txt.
+    for ref_value in _ref_values(ref_token):
+        plans.append(
+            (
+                f"форма, _ref={ref_value[:14]}…",
+                "form",
+                {"token": token, "av1": 0, "autoplay": 0, "_ref": ref_value},
+                {**base_headers, "Borth": f"{fingerprint}|{suffix}"},
+                True,
+            )
+        )
+
     result: list[dict] = []
     for name, _encoding, payload, headers, is_form in plans:
         for ident in numbers:
@@ -675,10 +695,69 @@ def try_variants(embed: str, player_html: str, ids: list[str] | None = None) -> 
     return result
 
 
+def _ref_values(from_page: str) -> list[str]:
+    """Значения `_ref`, которые есть смысл проверить: страница, затем curl.txt."""
+    values: list[str] = []
+    if from_page:
+        values.append(from_page)
+    for item in learnt_ref_tokens():
+        if item and item not in values:
+            values.append(item)
+    return values[:3]
+
+
+def learnt_ref_tokens() -> list[str]:
+    """`refToken`, добытые из наших же `curl.txt` (их кладёт пользователь).
+
+    После первого успешного повтора запроса браузера `_ref` больше не
+    загадка — но показывать его в отчётах незачем, а вот приложению он
+    нужен: без него `/bnsi` может отвечать 404 так же, как нам.
+    """
+    found: list[str] = []
+    for name in ("curl.txt", "curl", "bnsi.txt"):
+        path = CHECK_DIR / name
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in re.finditer(r"_ref=([A-Za-z0-9._%-]{20,})", text):
+            value = urllib.parse.unquote(match.group(1))
+            if value not in found:
+                found.append(value)
+    return found
+
+
 def _slug(name: str) -> str:
     """Имя файла из названия варианта: без пробелов и знаков."""
     keep = [ch.lower() if ch.isalnum() else "_" for ch in name]
     return "".join(keep).strip("_")[:40]
+
+
+def ref_token_of(player_html: str) -> str:
+    """`refToken` из `userParam` страницы плеера — это подпись сайта-источника.
+
+    В расшифровке плеера (`app.js`, отправка `/bnsi`) стоит:
+
+        userParam['refToken'] && (hf['_ref'] = userParam['refToken'])
+
+    то есть `_ref` появляется в запросе ТОЛЬКО если сервер подставил
+    `refToken` в страницу. В образце заказчика от 24.11.2026 там пусто
+    (`refToken: ''`), а в ЕГО запросе из браузера `_ref` был настоящий:
+
+        s1.1795636688_b9b59a5200accf9ca738b61c.aHR0cHM6Ly96bG9yZC5vcmc
+           время      24 hex (подпись)          base64 = https://zlord.org
+
+    Значит, заполняет его сам сайт-источник. Если он есть — отправляем.
+    """
+    # Ключ бывает и без кавычек (`refToken: '…'`), и в кавычках
+    # (`"refToken": "…"`) — поэтому кавычки вокруг имени необязательны.
+    match = re.search(
+        r"""refToken["']?\s*:\s*["']([^"']*)["']""",
+        player_html or "",
+    )
+    return match.group(1) if match else ""
 
 
 def _site_token(embed: str) -> str:
