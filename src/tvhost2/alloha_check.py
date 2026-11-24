@@ -121,7 +121,13 @@ def main(argv: list[str] | None = None) -> int:
         say(f"Borth собран: {len(borth)} символов")
 
         _line("3. Запрос адресов (POST /bnsi)")
-        body, sources = alloha_bnsi.fetch_sources(embed, player)
+        tries = alloha_bnsi.attempts(embed, player)
+        say(f"попыток: {len(tries)} (по одной на номер файла)")
+        for attempt in tries:
+            verdict = "ok" if "hlsSource" in str(attempt.get("body")) else "нет"
+            say(f"   id {attempt.get('id')} → {attempt.get('status')} (hlsSource: {verdict})")
+        body = str((tries[-1] if tries else {}).get("body") or "")
+        sources = alloha_bnsi.sources_of(body)
         if sources:
             say(f"hlsSource: {len(sources)} озвучек — ПОЛУЧЕНО")
             qualities = alloha.qualities_of_sources(sources, 0)

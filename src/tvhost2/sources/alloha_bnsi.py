@@ -356,32 +356,50 @@ def quality_urls(source: dict[str, Any]) -> dict[int, str]:
     return result
 
 
-def fetch_sources(embed: str, player_html: str) -> tuple[str, list[dict[str, Any]]]:
-    """Главный вход: запросить адреса по каждому файлу, вернуть первый удачный.
+def attempts(embed: str, player_html: str) -> list[dict[str, Any]]:
+    """Все попытки запроса адресов — чтобы было видно, что и чем ответило.
 
-    Возвращает `(тело ответа, hlsSource)`. Пустой список — значит, ни один
-    файл не отдался (обычно это региональный отказ).
+    Возвращает список словарей: `url`, `body`, `status`, `headers` (тела
+    ответов). Порядок — как в `file_ids`. Нужно диагностике: по одному
+    «контент не найден» невозможно понять, дело в номере файла, в регионе
+    или в чём-то третьем, а по списку из шести попыток — видно.
     """
     borth = borth_for(player_html)
     kind = kind_of(player_html)
     ids = file_ids(player_html, embed)
-    last_body = ""
+    result: list[dict[str, Any]] = []
     for ident in ids[:6]:
         url = bnsi_path(embed, kind, ident)
+        headers = {"Borth": borth, "Referer": embed, "Origin": _origin_of(embed)}
         status, body = _post_json(
             url,
             {"token": _site_token(embed), "av1": 0, "autoplay": 0},
-            {"Borth": borth, "Referer": embed, "Origin": _origin_of(embed)},
+            headers,
         )
-        last_body = body
-        if status == HTTP_OK:
-            sources = sources_of(body)
-            if sources:
-                return body, sources
-        if not asked_region(body) and status not in (HTTP_OK, HTTP_NOT_FOUND):
-            # Не «не найден» и не успех: похоже, дело в запросе, а не в
-            # регионе. Второй файл уже не поможет — выходим с телом.
+        result.append({"id": ident, "url": url, "status": status, "body": body})
+        if status == HTTP_OK and sources_of(body):
             break
+        if not asked_region(body) and status not in (HTTP_OK, HTTP_NOT_FOUND):
+            # Не «не найден» и не успех: похоже, дело в запросе. Следующие
+            # номера уже не помогут.
+            break
+    return result
+
+
+def fetch_sources(embed: str, player_html: str) -> tuple[str, list[dict[str, Any]]]:
+    """Главный вход: запросить адреса, вернуть первое удачное тело и `hlsSource`.
+
+    Пустой список — ни один файл не отдался. Почему именно — показывает
+    `attempts()`; источник и диагностика ходят через неё, чтобы не было двух
+    разных путей к одному и тому же запросу.
+    """
+    last_body = ""
+    for attempt in attempts(embed, player_html):
+        last_body = str(attempt.get("body") or "")
+        if attempt.get("status") == HTTP_OK:
+            sources = sources_of(last_body)
+            if sources:
+                return last_body, sources
     return last_body, []
 
 
