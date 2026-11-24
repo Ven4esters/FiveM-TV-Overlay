@@ -1182,7 +1182,7 @@ hls.js доигрывает буфер старого качества — ин�
 
 - Оверлей: запустите `run_console.bat` — откроется консоль с логами.
 - Прокси: автоматически пишется в **`proxy.log`**. Кликните по статусу в панели, чтобы посмотреть последние строки.
-- Прокси запускается оверлеем автоматически; для отдельной диагностики: `run_console.bat` или `set PYTHONPATH=src` + `.venv\Scripts\python.exe -m tvhost.proxy`
+- Сервер запускается пультом автоматически; отдельно — `python -m tvhost2 --port 9000` (см. раздел 13)
 - Кеш: `videos/cache/` — какие файлы уже скачаны.
 
 ---
@@ -1212,22 +1212,13 @@ hls.js доигрывает буфер старого качества — ин�
 # Активировать окружение
 .venv\Scripts\activate
 
-# Код лежит в src/tvhost — без этого Python не найдёт пакет
+# Код лежит в src/tvhost2 — без этого Python не найдёт пакет
 set PYTHONPATH=src
 
-# Прокси
-python -m tvhost.proxy --port 9000
+# Сервер (кнопки пульта поднимают его же)
+python -m tvhost2 --port 9000
 
-# Демо-видео (проверка, что всё работает)
-python -m tvhost.core.free_videos --check
-
-# Скачать видео для локальной раздачи
-python -m tvhost.core.download "https://www.youtube.com/watch?v=XXXX"
-
-# Локальный сервер для готовых файлов
-python -m tvhost.server --port 8000
-
-# Управление по HTTP (то же, что делают кнопки оверлея)
+# Управление по HTTP (то же, что делают кнопки пульта)
 curl "http://127.0.0.1:9000/control/<sid>?cmd=toggle"
 curl "http://127.0.0.1:9000/control/<sid>?cmd=seek&value=60"
 curl "http://127.0.0.1:9000/control/<sid>?cmd=quality&value=2"   # 2 = индекс из /state.qualities

@@ -153,9 +153,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Запуск прокси и проверка источников
+      - name: Запуск сервера и проверка источников
         run: |
-          python -m tvhost.proxy --port 9000 &
+          # v1 (`python -m tvhost.proxy`) удалён из дерева 24.11.2026 —
+          # запускаем v2. `tvhost` ставится точкой входа пакета.
+          tvhost --port 9000 &
           sleep 8
           # -m network выбирает тесты, помеченные как сетевые.
           # Код 5 = «ничего не выбрано»: сетевых тестов сейчас нет, это не сбой.
