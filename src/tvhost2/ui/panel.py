@@ -48,6 +48,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, __version__
 from ..core import registry
+from ..core.models import episode_index
 from ..sources import register_all
 from . import theme
 from .api import Api, ApiError
@@ -755,14 +756,23 @@ class Panel(QWidget):
         self.episode_box.clear()
         if titles:
             self.episode_box.addItems(titles)
-            # Номер может прийти строкой («3») — привод приведением, но без
-            # падения: список серий не должен ломать пульт.
+            # Номер может прийти строкой («3») — приводим, но без падения:
+            # список серий не должен ломать пульт.
             try:
                 current = int(data.get("episode") or 0)
             except (TypeError, ValueError):
                 current = 0
-            if 1 <= current <= len(titles):
-                self.episode_box.setCurrentIndex(current - 1)
+            # Ставим по НОМЕРУ серии, а не по «номер минус один». У сериала
+            # бывают дыры в нумерации (у anidub.org встречается), и тогда
+            # индекс в списке не совпадает с номером: при сериях 1, 3, 5
+            # третья строка — это 5-я серия, а не 3-я. Номер серии есть в
+            # подписи («3 серия»), по ней и сверяемся.
+            #
+            # -1 значит «такой серии в списке нет» — оставляем как выбрал
+            # Qt (первую строку), а не ставим мусорный индекс.
+            found = episode_index(titles, current)
+            if found >= 0:
+                self.episode_box.setCurrentIndex(found)
             season = str(data.get("episodeSeason") or "").strip()
             self.episode_box.setToolTip(f"{season} сезон · серия" if season else "Серия")
         self.episode_box.blockSignals(False)

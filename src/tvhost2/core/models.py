@@ -8,6 +8,7 @@ if/else. Здесь структура одна, и опечатка в имен
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -243,3 +244,37 @@ def sort_qualities(items: list[Quality]) -> tuple[Quality, ...]:
         if cur is None or q.bitrate_kbps > cur.bitrate_kbps:
             seen[q.height] = q
     return tuple(sorted(seen.values(), key=lambda q: (q.height, q.bitrate_kbps), reverse=True))
+
+
+def episode_index(titles: list[str], number: int) -> int:
+    """Строка списка, соответствующая номеру серии. -1 — такой серии нет.
+
+    Почему не «номер минус один»: у сериала бывают дыры в нумерации (на
+    anidub.org встречается), и тогда индекс строки не совпадает с номером
+    серии. При сериях 1, 3, 5 третья строка — это 5-я серия, а не 3-я, и
+    пульт бодро показывал бы не ту.
+
+    Ищем по номеру, вытащенному из подписи («3 серия», «Эпизод 3», просто
+    «3»). Не нашли — берём ближайшую МЕНЬШУЮ серию, как и сам источник при
+    разборе (см. `cvh.pick`): тогда пульт показывает ту серию, которая
+    реально играет, а не следующую.
+
+    -1 значит «показывать нечего»: пустой список или номер вне диапазона.
+    """
+    if number <= 0 or not titles:
+        return -1
+    numbers: list[int] = []
+    for title in titles:
+        found = re.search(r"\d+", str(title))
+        numbers.append(int(found.group()) if found else 0)
+    exact = [i for i, value in enumerate(numbers) if value == number]
+    if exact:
+        return exact[0]
+    # «Ближайшая меньшая» — только среди РАСПОЗНАННЫХ номеров. Ноль значит
+    # «номер не разобрали», и брать его за серию нельзя: пульт показал бы
+    # первую строку как «подходящую» там, где подходящей нет.
+    below = [i for i, value in enumerate(numbers) if 0 < value < number]
+    if below:
+        return max(below, key=lambda i: numbers[i])
+    ordered = [i for i, value in enumerate(numbers) if value > 0]
+    return min(ordered, key=lambda i: numbers[i]) if ordered else -1
