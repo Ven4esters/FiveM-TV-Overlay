@@ -115,3 +115,26 @@ def test_journal_keeps_old_lines_intact(tmp_path) -> None:  # noqa: ANN001
 
     assert lines == "00:04:14 [boot] === запуск ===", lines
     assert "[info]" not in lines
+
+
+def test_ui_entry_point_exists() -> None:
+    """Окно должно запускаться одной командой: `python -m tvhost2.ui`.
+
+    Без `__main__.py` в пакете ui интерфейс вообще не стартовал — сервер
+    поднимался, а окна не было ни в одной инструкции.
+    """
+    import importlib
+
+    module = importlib.import_module("tvhost2.ui.__main__")
+    assert callable(module.main)
+
+
+def test_ui_entry_point_accepts_serve_flag() -> None:
+    """Ключ --serve поднимает прокси в том же процессе — одна команда для заказчика."""
+    import inspect
+
+    from tvhost2.ui import __main__ as entry
+
+    source = inspect.getsource(entry.main)
+    assert "--serve" in source
+    assert "--port" in source
