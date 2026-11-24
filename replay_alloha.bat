@@ -75,6 +75,25 @@ if "%RESULT%"=="0" (
 ) else (
     echo Запрос завершился не с нулём. Пришлите всё, что выше: разберу.
 )
+
+REM --- Контрольный повтор тем же curl.exe, что встроен в Windows 10/11. ---
+REM Нужен, чтобы понять: сервер различает КЛИЕНТА (TLS/HTTP2) или отвечает
+REM 404 одинаково всем. Сравнив два ответа, сразу видно, где искать.
+echo.
+echo ============================================================
+echo   Контроль: тот же запрос через curl.exe из Windows
+echo ============================================================
+where curl.exe >nul 2>&1
+if errorlevel 1 (
+    echo [пропуск] curl.exe не найден — это нормально для Windows 7/8.
+) else (
+    echo Код ответа curl.exe:
+    curl.exe -K "alloha_check\replay_curl_request.txt" --silent --show-error --output "alloha_check\replay_curl_win_body.txt" --write-out "%%{http_code}  (размер %%{size_download} байт)\n"
+    echo.
+    echo Тело ответа curl.exe:
+    type "alloha_check\replay_curl_win_body.txt"
+    echo.
+)
 echo.
 pause
 endlocal

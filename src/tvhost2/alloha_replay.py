@@ -342,6 +342,27 @@ def replay(captured: Captured) -> tuple[int, dict[str, str], str]:
         connection.close()
 
 
+def curl_config(captured: Captured) -> str:
+    """Собрать файл конфигурации для `curl -K`: тот же запрос, но руками.
+
+    Зачем: наш повтор идёт через `http.client`. Если сервер различает
+    клиентов по чему-то, что видит только настоящий `curl.exe` (свой TLS,
+    свои приоритеты HTTP/2), то сравнение двух ответов сразу покажет, где
+    искать. На Windows `curl.exe` встроен начиная с 10-й версии.
+    """
+    lines = [f'url = "{captured.url}"', f"-X {captured.method}", "--compressed"]
+    for name, value in captured.header_pairs():
+        if name.lower() in SKIP_WHEN_SENDING:
+            continue
+        safe = value.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'-H "{name}: {safe}"')
+    if captured.body:
+        body = captured.body.decode("utf-8", "replace")
+        body = body.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'--data-raw "{body}"')
+    return "\n".join(lines) + "\n"
+
+
 def our_headers() -> dict[str, str]:
     """Заголовки, которые сейчас шлёт приложение (для таблицы сравнения)."""
     from .sources import alloha_bnsi
@@ -459,6 +480,11 @@ def main(argv: list[str] | None = None) -> int:
             if key.lower() == wanted:
                 print(f"  {key}: {value[:100]}")
     print(f"тело: {body[:300]}")
+
+    # Тот же запрос, но чужими руками: curl.exe против нашего http.client.
+    config_path = OUT / "replay_curl_request.txt"
+    config_path.write_text(curl_config(captured), encoding="utf-8")
+    print(f"\nфайл для curl.exe сохранён: {config_path.name}")
 
     stamp = Path(source).stem
     (OUT / f"replay_{stamp}_body.txt").write_text(body, encoding="utf-8")

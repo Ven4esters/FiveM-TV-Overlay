@@ -795,3 +795,51 @@ class TestBrowserIdWins:
         )
         monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
         assert alloha_bnsi.browser_ids() == ["777"]
+
+
+class TestCurlConfig:
+    """Файл для `curl -K`: тот же запрос, но чужими руками (curl.exe Windows).
+
+    Нужен, чтобы сравнить два клиента: если curl.exe получит hlsSource, а мы
+    нет — сервер различает клиента по TLS/HTTP2, и искать надо там.
+    """
+
+    CURL = (
+        'curl.exe ^"https://x.live/bnsi/movies/1847894^" ^\n'
+        "  -X POST ^\n"
+        '  -H ^"Borth: abc|def^" ^\n'
+        '  -H ^"Content-Type: application/x-www-form-urlencoded; charset=UTF-8^" ^\n'
+        '  --data-raw ^"token=1^&av1=true^"'
+    )
+
+    def test_url_and_method(self) -> None:
+        from tvhost2 import alloha_replay
+
+        config = alloha_replay.curl_config(alloha_replay.parse_curl(self.CURL))
+        assert 'url = "https://x.live/bnsi/movies/1847894"' in config
+        assert "-X POST" in config
+        assert "--compressed" in config
+
+    def test_headers_present(self) -> None:
+        from tvhost2 import alloha_replay
+
+        config = alloha_replay.curl_config(alloha_replay.parse_curl(self.CURL))
+        assert '-H "Borth: abc|def"' in config
+        assert "Content-Type: application/x-www-form-urlencoded" in config
+
+    def test_body_kept(self) -> None:
+        from tvhost2 import alloha_replay
+
+        config = alloha_replay.curl_config(alloha_replay.parse_curl(self.CURL))
+        assert '--data-raw "token=1&av1=true"' in config
+
+    def test_quotes_escaped(self) -> None:
+        from tvhost2 import alloha_replay
+
+        captured = alloha_replay.Captured(
+            url="https://x.live/bnsi/movies/1",
+            headers={"X-Test": 'a"b\\c'},
+            body=b"k=v",
+        )
+        config = alloha_replay.curl_config(captured)
+        assert 'a\\"b' in config, "кавычку надо экранировать, иначе curl -K споткнётся"
