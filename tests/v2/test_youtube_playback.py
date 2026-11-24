@@ -493,3 +493,91 @@ def test_session_state_lists_subtitles(proxy) -> None:  # noqa: ANN001
 
     session.stream = Stream(source="YouTube", title="", kind=StreamKind.HLS)
     assert session.state()["subtitles"] == []
+
+
+def test_mux_plays_in_chromium(tmp_path: Path) -> None:
+    """Склейка играет в браузере: и картинка, и звук.
+
+    Отдельный тест, потому что здесь ломалось дважды: сначала качество
+    указывало на исходный плейлист вместо склейки, потом мастер отдавал
+    file:// прямо в браузер. Оба раза поток молчал без ошибок — ловится
+    только реальным воспроизведением.
+    """
+    from tvhost2.core import mux
+
+    if not mux.available():
+        pytest.skip("нет ffmpeg")
+
+    ff = _ffmpeg()
+    folder = tmp_path / "mux"
+    folder.mkdir()
+    subprocess.run(  # noqa: S603
+        [
+            ff, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+            "-i", "testsrc2=size=640x360:rate=25", "-t", "12",
+            "-c:v", "libx264", "-preset", "ultrafast", "-g", "25", "-an",
+            "-f", "hls", "-hls_time", "4", "-hls_playlist_type", "vod",
+            "-hls_segment_filename", str(folder / "v_%03d.ts"),
+            str(folder / "video.m3u8"),
+        ],
+        check=True,
+        capture_output=True,
+    )  # fmt: skip
+    subprocess.run(  # noqa: S603
+        [
+            ff, "-hide_banner", "-loglevel", "error", "-f", "lavfi",
+            "-i", "sine=frequency=440:duration=12", "-c:a", "aac", "-b:a", "128k",
+            str(folder / "sound.m4a"),
+        ],
+        check=True,
+        capture_output=True,
+    )  # fmt: skip
+
+    muxed = mux.muxed_for(f"file://{folder}/video.m3u8", f"file://{folder}/sound.m4a")
+    assert muxed is not None and mux.wait_ready(muxed, timeout=60)
+
+    port = _free_port()
+    httpd = server.serve("127.0.0.1", port)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    session = server.STATE.sessions.create("u")
+    session.stream = Stream(
+        source="YouTube",
+        title="Склейка",
+        kind=StreamKind.HLS,
+        qualities=(
+            Quality(
+                height=360,
+                width=640,
+                bitrate_kbps=1200,
+                url=mux.local_playlist_path(muxed),
+            ),
+        ),
+        duration_s=12,
+    )
+    try:
+        with playwright.sync_playwright() as pw:
+            browser = pw.chromium.launch(args=["--autoplay-policy=no-user-gesture-required"])
+            page = browser.new_page()
+            page.goto(f"{base}/player/{session.sid}", wait_until="load")
+            page.evaluate("() => document.getElementById('bigplay').click()")
+            played = None
+            for _ in range(60):
+                time.sleep(0.5)
+                played = page.evaluate(
+                    """() => { const v = document.getElementById('v');
+                        return {t: v.currentTime,
+                                a: v.webkitAudioDecodedByteCount || 0,
+                                vid: v.webkitVideoDecodedByteCount || 0,
+                                err: v.error ? v.error.code : 0}; }"""
+                )
+                if played["a"] > 0 and played["vid"] > 0:
+                    break
+            browser.close()
+    finally:
+        httpd.shutdown()
+
+    assert played is not None
+    assert played["err"] == 0, played
+    assert played["vid"] > 0, f"склейка: видео не идёт — {played}"
+    assert played["a"] > 0, f"склейка: звук не идёт — {played}"
