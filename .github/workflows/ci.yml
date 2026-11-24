@@ -61,7 +61,11 @@ jobs:
         # нечем — страница прогона требует входа, а API отдаёт 403.
         run: |
           set -o pipefail
-          pytest -m "not browser" --cov=src/tvhost2 --cov-report=term --cov-report=xml 2>&1 | tee pytest.log
+          # Сетевые тесты исключены из БЛОКИРУЮЩЕГО прогона: они ходят на
+          # живые сайты, и падение Kodik (он один раз отдал не-JSON) валило
+          # весь мерж. Их гоняет отдельное задание «Регресс на реальных
+          # источниках», где падение сети не блокирует (continue-on-error).
+          pytest -m "not browser and not network" --cov=src/tvhost2 --cov-report=term --cov-report=xml 2>&1 | tee pytest.log
         continue-on-error: true
 
       - name: Журнал тестов
