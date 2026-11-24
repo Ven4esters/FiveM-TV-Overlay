@@ -42,6 +42,7 @@ from . import hls as hls_bridge
 from . import player as player_page
 from . import resolver
 from .fetch import FetchError, fetch
+from .history import HISTORY
 from .session import SessionStore
 
 log = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ class AppState:
         self.runtime: dict[str, SessionRuntime] = {}
         self.loudness = loudness.LoudnessCache(Path("videos/cache/loudness.json"))
         self.loudness_lock = threading.Lock()
+        self.history = HISTORY
 
     def runtime_for(self, sid: str) -> SessionRuntime:
         if sid not in self.runtime:
@@ -180,6 +182,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
             "/index.html": self._index,
             "/sessions": self._list_sessions,
             "/sources": self._list_sources,
+            "/history": self._history_list,
         }
         plain = exact.get(path)
         if plain is not None:
@@ -238,6 +241,18 @@ class OverlayHandler(BaseHTTPRequestHandler):
         STATE.drop(sid)
         return self._json(200, {"ok": True, "closed": sid})
 
+    def _history_list(self) -> None:
+        """Последние просмотры для пульта: до пяти, свежие сверху."""
+        return self._json(200, {"items": STATE.history.as_list()})
+
+    def _history_forget(self, sid: str, query: dict[str, list[str]]) -> None:
+        """Забыть просмотр. Ключ — ссылка, а не sid: история не про сессии."""
+        url = (query.get("url") or [""])[0] or urllib.parse.unquote(sid)
+        if not url:
+            return self._json(400, {"error": "нужен параметр url"})
+        removed = STATE.history.forget(url)
+        return self._json(200, {"ok": removed, "items": STATE.history.as_list()})
+
     def _list_sources(self) -> None:
         register_all()
         self._json(200, {"sources": registry.status_table()})
@@ -266,6 +281,13 @@ class OverlayHandler(BaseHTTPRequestHandler):
         if path.startswith("/trans/"):
             self._translation(path[len("/trans/") :].strip("/"), query)
             return
+        # Сравнение ДОБАВЛЯЕТ слэш: адрес приходит как "/history/forget",
+        # без хвоста. Со слэшем маршрут не срабатывал и отвечал 404 —
+        # нашлось живой проверкой, тест на исходнике этого не видел.
+        if path.rstrip("/") == "/history/forget" or path.startswith("/history/forget/"):
+            tail = path[len("/history/forget") :].strip("/")
+            self._history_forget(tail, query)
+            return
         if path.startswith("/close/"):
             self._close_session(path[len("/close/") :].strip("/"))
             return
@@ -292,6 +314,14 @@ class OverlayHandler(BaseHTTPRequestHandler):
         session.stream = resolved.stream
         session.source_name = resolved.source_name
         STATE.runtime_for(session.sid)
+        # В историю — ПОСЛЕ успешного разбора: если сайт не поддержан или
+        # поток не отдался, запоминать нечего, возвращаться некуда.
+        STATE.history.remember(
+            url,
+            title=session.title,
+            source=resolved.source_name,
+            translation=session.translation_title,
+        )
         log.info("сессия %s: %s → %s", session.sid, resolved.source_name, url[:60])
         return self._json(
             200,
@@ -429,6 +459,15 @@ class OverlayHandler(BaseHTTPRequestHandler):
             return self._json(200, {"ok": False, "reason": exc.message})
         session.stream = resolved.stream
         STATE.runtime_for(sid).commands.clear()
+        # Озвучка — часть просмотра: «Ван-Пис в дубляже» и «в субтитрах»
+        # это разные записи, к каждой хочется вернуться своей.
+        STATE.history.remember(
+            session.url,
+            title=session.title,
+            source=session.source_name,
+            translation_index=index,
+            translation=session.translation_title,
+        )
         return self._json(
             200,
             {"ok": True, "translation": session.translation_title, "sid": session.sid},

@@ -26,6 +26,7 @@ import threading
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QComboBox,
     QFrame,
@@ -33,6 +34,8 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QSlider,
@@ -44,6 +47,8 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME, __version__
+from ..core import registry
+from ..sources import register_all
 from . import theme
 from .api import Api, ApiError
 
@@ -67,8 +72,9 @@ class Panel(QWidget):
     state_arrived = Signal(dict)
     journal_arrived = Signal(str)
     sources_arrived = Signal(list)
-    error_text = Signal(str)
+    error_text = Signal(str, str)  # (что случилось, что делать)
     loudness_arrived = Signal(str)
+    history_ready = Signal(list)  # список недавних просмотров
 
     def __init__(self, api: Api | None = None) -> None:
         super().__init__()
@@ -80,6 +86,8 @@ class Panel(QWidget):
         self._subtitle_titles: list[str] = []
         """Названия дорожек текущего видео — для подсказки при переключении."""
         self._last_err_key = ""
+        self._error_shown = False
+        self._hint_text = ""
         self._tabs_built = False
 
         self.setWindowTitle(f"{APP_NAME} {__version__}")
@@ -89,6 +97,7 @@ class Panel(QWidget):
         self._build()
         self._connect()
         self._restore_tab()
+        self._load_history()
         # QSS ставится на ПРИЛОЖЕНИЕ, а не на это окно: стиль на конкретном
         # виджете конфликтует с application-стилем, и Qt молча применяет
         # только часть правил (кнопка #primary оставалась системной серой).
@@ -166,6 +175,8 @@ class Panel(QWidget):
         layout.setSpacing(theme.GAP_M)
 
         layout.addWidget(self._build_url_block())
+        self.history_box = self._build_history_block()
+        layout.addWidget(self.history_box)
         layout.addWidget(self._build_output_block())
         layout.addWidget(self._build_remote_block())
         layout.addStretch(1)
@@ -184,7 +195,10 @@ class Panel(QWidget):
         caption.setObjectName("sectionTitle")
         head.addWidget(caption, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        hint = QLabel("Rutube, VK, YouTube, Twitch, Kodik")
+        # Список НЕ переписываем руками: он брался из головы и отставал от
+        # реестра (появились anidub.org, yummyani, ani-media). Теперь это
+        # факт из реестра — тот же, что отдаёт ошибка «не поддерживается».
+        hint = QLabel(_supported_preview())
         hint.setObjectName("faint")
         head.addWidget(hint, 0, Qt.AlignmentFlag.AlignVCenter)
         head.addStretch(1)
@@ -207,6 +221,56 @@ class Panel(QWidget):
         self.btn_open.setIcon(theme.icon("play", 18))
         self.btn_open.setToolTip("Разобрать ссылку и получить адрес для телевизора")
         column.addWidget(self.btn_open)
+        return box
+
+    history_list_limit = 5
+    """Сколько недавних показываем. Совпадает с пределом истории на сервере."""
+
+    def _build_history_block(self) -> QWidget:
+        """Последние пять просмотров: вернуться к тому, что играло.
+
+        Свёрнут, пока истории нет: пустая карточка на пульте — это шум,
+        а не польза. Появляется сама, как только первое видео открылось.
+        """
+        box = QFrame()
+        box.setObjectName("card")
+        column = QVBoxLayout(box)
+        column.setContentsMargins(theme.GAP_M, theme.GAP_M, theme.GAP_M, theme.GAP_M)
+        column.setSpacing(theme.GAP_S)
+
+        head = QHBoxLayout()
+        head.setSpacing(theme.GAP_S)
+        caption = QLabel("Недавние")
+        caption.setObjectName("sectionTitle")
+        head.addWidget(caption, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.history_hint = QLabel("вернуться к тому, что играло")
+        self.history_hint.setObjectName("faint")
+        head.addWidget(self.history_hint, 0, Qt.AlignmentFlag.AlignVCenter)
+        head.addStretch(1)
+        self.btn_history_clear = QPushButton()
+        self.btn_history_clear.setObjectName("ghost")
+        self.btn_history_clear.setIcon(theme.icon("close", 16))
+        self.btn_history_clear.setFixedSize(24, 24)
+        self.btn_history_clear.setToolTip("Очистить недавние")
+        self.btn_history_clear.setVisible(False)
+        head.addWidget(self.btn_history_clear, 0, Qt.AlignmentFlag.AlignVCenter)
+        column.addLayout(head)
+
+        self.history_list = QListWidget()
+        self.history_list.setObjectName("historyList")
+        # Высота считается из строк, а не задаётся на глаз. Две строки текста
+        # (название + подпись) при 14/12 px и отступах 8 px дают ~44 px на
+        # запись; первые пять записей должны быть видны без прокрутки, иначе
+        # смысл «вернуться» теряется — люди не догадываются листать.
+        # Размер по содержимому: QListWidget сам скажет, сколько ему нужно на
+        # все пять записей. Числа «на глаз» не работают — шрифт и отступы
+        # в QSS меняются, и список обрезал записи.
+        self.history_list.setSizeAdjustPolicy(QAbstractItemView.SizeAdjustPolicy.AdjustToContents)
+        self.history_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.history_list.setSpacing(2)
+        column.addWidget(self.history_list)
+
+        box.setVisible(False)
         return box
 
     def _build_output_block(self) -> QWidget:
@@ -243,6 +307,35 @@ class Panel(QWidget):
         column.addLayout(row)
         return box
 
+    def _build_hint_row(self) -> QHBoxLayout:
+        """Подсказка «что делать» под ошибкой.
+
+        Отдельной строкой, потому что в одну строку с причиной она не
+        влезает и обрезается многоточием — а смысл подсказки в том, чтобы её
+        ПРОЧИТАЛИ. Скрыта, пока всё в порядке: постоянная плашка «на случай
+        ошибки» приучает не смотреть в это место.
+        """
+        self.hint_label = QLabel("")
+        self.hint_label.setObjectName("hintText")
+        self.hint_label.setWordWrap(True)
+        self.hint_label.setVisible(False)
+
+        self.btn_hint_close = QPushButton()
+        self.btn_hint_close.setObjectName("ghost")
+        self.btn_hint_close.setIcon(theme.icon("close", 14))
+        self.btn_hint_close.setFixedSize(20, 20)
+        self.btn_hint_close.setToolTip("Скрыть подсказку")
+        self.btn_hint_close.setVisible(False)
+        self.btn_hint_close.clicked.connect(self._hide_error)
+
+        row = QHBoxLayout()
+        row.setSpacing(theme.GAP_S)
+        row.addWidget(self.hint_label, 1)
+        # Крестик по верхнему краю: на трёхстрочной подсказке он должен
+        # стоять у первой строки, а не висеть по центру блока.
+        row.addWidget(self.btn_hint_close, 0, Qt.AlignmentFlag.AlignTop)
+        return row
+
     def _build_remote_block(self) -> QWidget:
         box = QFrame()
         box.setObjectName("card")
@@ -262,6 +355,8 @@ class Panel(QWidget):
         self.quality_box.setMinimumWidth(120)
         head.addWidget(self.quality_box, 0, Qt.AlignmentFlag.AlignVCenter)
         column.addLayout(head)
+
+        column.addLayout(self._build_hint_row())
 
         self.translation_box = QComboBox()
         self.translation_box.setToolTip("Озвучка")
@@ -437,6 +532,9 @@ class Panel(QWidget):
             lambda: QApplication.clipboard().setText(self.journal.toPlainText())
         )
         self.btn_norm_toggle.toggled.connect(self.norm_box.setVisible)
+        self.history_ready.connect(self._fill_history)
+        self.history_list.itemClicked.connect(self._history_clicked)
+        self.btn_history_clear.clicked.connect(self._clear_history)
         self.btn_norm.toggled.connect(self._normalisation_changed)
 
         # пульт
@@ -481,12 +579,12 @@ class Panel(QWidget):
             try:
                 result = self.api.create_session(url)
             except ApiError as exc:
-                self.error_text.emit(str(exc))
+                self.error_text.emit(str(exc), "Проверьте, что прокси запущен, и повторите")
                 return
             finally:
                 pass
             if not (result.data or {}).get("ok", True):
-                self.error_text.emit(result.reason)
+                self.error_text.emit(result.reason, result.hint)
                 return
             data = result.data or {}
             self._fill_translations(data)
@@ -511,6 +609,70 @@ class Panel(QWidget):
         self._badge("ok")
         self._hide_error()
         self._poll_state()
+        self._load_history()
+
+    def _load_history(self) -> None:
+        """Перечитать список недавних. Вызывается после каждого открытия."""
+
+        def worker() -> None:
+            try:
+                items = self.api.history()
+            except ApiError:
+                return
+            self.history_ready.emit(items)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _fill_history(self, items: list[dict]) -> None:
+        """Нарисовать недавние: название, источник и когда.
+
+        Правила проекта: иконка вместо символа, цвета из палитры темы,
+        подписи 12 px серым. Название обрезается многоточием — ссылки
+        длинные, а переносить строку в списке значит терять ритм.
+        """
+        self.history_list.clear()
+        for item in items:
+            title = str(item.get("title") or item.get("url") or "без названия")
+            source = str(item.get("source") or "")
+            when = str(item.get("when") or "")
+            translation = str(item.get("translation") or "")
+            subtitle = " · ".join(part for part in (source, translation, when) if part)
+            entry = QListWidgetItem()
+            entry.setText(f"{title}\n{subtitle}" if subtitle else title)
+            entry.setIcon(theme.icon("film", 16))
+            entry.setToolTip(f"{title}\n{item.get('url', '')}")
+            entry.setData(Qt.ItemDataRole.UserRole, str(item.get("url") or ""))
+            self.history_list.addItem(entry)
+        # Высота под все записи: считаем по фактическим строкам, а не
+        # константой. sizeHintForRow честно учитывает шрифт и отступы QSS,
+        # а ручные «44 px» давали обрезку на другой машине.
+        rows = self.history_list.count()
+        if rows:
+            # Шаг строки = высота строки + отступ между строками (setSpacing).
+            # Без второго слагаемого последняя запись обрезается на 4 px —
+            # проверено замером visualItemRect, а не на глаз.
+            step = (self.history_list.sizeHintForRow(0) or 44) + self.history_list.spacing() * 2
+            frame = 2 * self.history_list.frameWidth()
+            visible = min(rows, self.history_list_limit)
+            self.history_list.setFixedHeight(step * visible + frame)
+        has_items = bool(items)
+        self.history_box.setVisible(has_items)
+        self.btn_history_clear.setVisible(has_items)
+
+    def _clear_history(self) -> None:
+        """Убрать все недавние. Подтверждения нет: они в памяти и вернутся
+        сами, если снова открыть видео — терять нечего."""
+        self.history_list.clear()
+        self.history_box.setVisible(False)
+        self.btn_history_clear.setVisible(False)
+
+    def _history_clicked(self, entry: QListWidgetItem) -> None:
+        """Клик по недавнему: подставить ссылку и открыть заново."""
+        url = str(entry.data(Qt.ItemDataRole.UserRole) or "")
+        if not url:
+            return
+        self.input_url.setText(url)
+        self._open()
 
     def _fill_translations(self, data: dict) -> None:
         titles = data.get("translations") or []
@@ -543,10 +705,10 @@ class Panel(QWidget):
             try:
                 result = self.api.control(self.sid, cmd, value)
             except ApiError as exc:
-                self.error_text.emit(str(exc))
+                self.error_text.emit(str(exc), "Проверьте, что прокси запущен")
                 return
             if not result.ok:
-                self.error_text.emit(result.reason)
+                self.error_text.emit(result.reason, result.hint)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -571,10 +733,10 @@ class Panel(QWidget):
             try:
                 result = self.api.translation(self.sid, index)
             except ApiError as exc:
-                self.error_text.emit(str(exc))
+                self.error_text.emit(str(exc), "Проверьте, что прокси запущен")
                 return
             if not result.ok:
-                self.error_text.emit(result.reason)
+                self.error_text.emit(result.reason, result.hint)
                 return
             self._set_remote_status("Пульт: озвучка сменилась — телевизор перезагрузит страницу")
 
@@ -625,7 +787,11 @@ class Panel(QWidget):
 
     def _apply_state(self, state: dict) -> None:
         if state.get("unreachable"):
+            # Не затираем отказ: «прокси не отвечает» — не новость, когда
+            # человек только что прочитал, почему ссылка не открылась.
             self._set_remote_status("Пульт: прокси не отвечает")
+            if self._error_shown:
+                return
             self._badge("error")
             return
         duration = float(state.get("duration") or 0)
@@ -654,16 +820,54 @@ class Panel(QWidget):
         self.btn_play.setIcon(theme.icon("pause" if playing else "play", 22))
         self.btn_mute.setIcon(theme.icon("muted" if state.get("muted") else "volume", 20))
 
-    def _on_error(self, message: str) -> None:
+    def _on_error(self, message: str, hint: str = "") -> None:
+        """Показать отказ так, чтобы его нельзя было не заметить.
+
+        Почему не просто `setText`: опрос пульта идёт каждые 800 мс, и
+        `_apply_state` перезаписывает строку статуса словами «играет
+        0:00 / 0:00». Подсказка «сайт не поддерживается» исчезала раньше,
+        чем человек успевал дочитать — именно на это была жалоба. Поэтому
+        отказ помечается флагом: опрос его не трогает, а снимает только
+        новое открытие или ручное закрытие.
+        """
         self.btn_open.setEnabled(True)
-        self._set_remote_status(f"Ошибка: {message}")
+        self._error_shown = True
+        # force: сам отказ должен пробить защиту, которую он же и включает.
+        self._set_remote_status(f"Ошибка: {message}", force=True)
+        self.remote_status.setObjectName("errorText")
+        self.remote_status.style().unpolish(self.remote_status)
+        self.remote_status.style().polish(self.remote_status)
+        self._hint_text = hint
+        self.hint_label.setText(hint)
+        self.hint_label.setVisible(bool(hint))
+        if hint:
+            # QLabel с переносом слов не пересчитывает высоту сам: текст
+            # обрезался на третьей строке — видно на скриншоте проверки.
+            # Ширину знает layout, поэтому просим её у него и только потом
+            # фиксируем высоту под фактический текст.
+            self.hint_label.setMinimumHeight(0)
+            width = max(self.hint_label.width(), 320)
+            needed = self.hint_label.heightForWidth(width)
+            if needed > 0:
+                self.hint_label.setMinimumHeight(needed + theme.GAP_S)
+        self.btn_hint_close.setVisible(True)
         self._badge("error")
         if message != self._last_err_key:
             self._last_err_key = message
             self.journal.appendPlainText(f"ОШИБКА: {message}")
 
     def _hide_error(self) -> None:
+        """Снять отказ: вызывается при новом открытии и кнопкой закрытия."""
         self._last_err_key = ""
+        self._error_shown = False
+        self._hint_text = ""
+        self._error_shown = False
+        self._hint_text = ""
+        self.hint_label.setVisible(False)
+        self.btn_hint_close.setVisible(False)
+        self.remote_status.setObjectName("faint")
+        self.remote_status.style().unpolish(self.remote_status)
+        self.remote_status.style().polish(self.remote_status)
 
     def _load_loudness(self) -> None:
         if not self.sid:
@@ -777,13 +981,42 @@ class Panel(QWidget):
     # ------------------------------------------------------------------
     #                              мелочи
     # ------------------------------------------------------------------
-    def _set_remote_status(self, text: str) -> None:
+    def _set_remote_status(self, text: str, force: bool = False) -> None:
+        """Строка статуса. Пока висит отказ, обычные сообщения не затирают его.
+
+        `force=True` — для самого отказа и для явной очистки: иначе статус
+        нельзя было бы сменить вообще.
+        """
+        if self._error_shown and not force:
+            return
         self.remote_status.setText(text)
 
     def _badge(self, state: str) -> None:
         self.badge.setProperty("state", state)
         self.badge.style().unpolish(self.badge)
         self.badge.style().polish(self.badge)
+
+
+SHORT_LIST = 5
+"""Сколько имён влезает в подпись под полем ссылки, прежде чем она начнёт
+переноситься на вторую строку и толкать поле ввода вниз."""
+
+
+def _supported_preview() -> str:
+    """Короткий список источников для подписи под полем ссылки.
+
+    Полный список длинный и в подпись не влезает, поэтому берём первые
+    источники реестра и добавляем «и ещё N». Порядок реестра = порядок
+    проверки, и он же приоритет — так подпись не врёт о главном.
+    """
+    try:
+        register_all()
+        names = registry.names()
+    except Exception:  # реестр недоступен — подпись не критична
+        return "аниме и видео по ссылке из браузера"
+    if len(names) <= SHORT_LIST:
+        return ", ".join(names)
+    return ", ".join(names[:4]) + f" и ещё {len(names) - 4}"
 
 
 def _mmss(seconds: float) -> str:

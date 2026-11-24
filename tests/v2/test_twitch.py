@@ -346,9 +346,24 @@ class TestOfflineChannel:
 
 class TestRegistry:
     def test_order(self) -> None:
-        """Twitch идёт после Kodik: ссылки не пересекаются, порядок стабилен."""
+        """Порядок реестра = приоритет, поэтому он закреплён тестом.
+
+        Встройка Kodik стоит сразу за прямым Kodik и ПЕРЕД Twitch: она
+        соглашается только на страницы сайтов, где нашлась ссылка на плеер,
+        и никогда не тянет на себя прямую ссылку. Остальные источники от
+        этого соседства не страдают, а порядок «сначала точные, потом
+        достающие» сохраняется.
+        """
         register_all()
-        assert registry.names()[:5] == ["Rutube", "VK Видео", "YouTube", "Kodik", "Twitch"]
+        assert registry.names()[:7] == [
+            "Rutube",
+            "VK Видео",
+            "YouTube",
+            "Kodik",
+            "Kodik (встройка)",
+            "YummyAnime",
+            "Twitch",
+        ]
 
     def test_finds_twitch(self) -> None:
         register_all()

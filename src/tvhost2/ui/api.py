@@ -128,6 +128,16 @@ class Api:
         """Сменить озвучку (Kodik и подобные сайты)."""
         return self._request(f"/trans/{sid}", {"index": str(index)}, method="POST", timeout=90)
 
+    def history(self) -> list[dict[str, Any]]:
+        """Последние просмотры: до пяти, свежие сверху."""
+        result = self._request("/history", timeout=6)
+        return list((result.data or {}).get("items") or [])
+
+    def forget(self, url: str) -> list[dict[str, Any]]:
+        """Убрать видео из истории. Возвращает обновлённый список."""
+        result = self._request("/history/forget", {"url": url}, method="POST", timeout=6)
+        return list((result.data or {}).get("items") or [])
+
     def sources(self) -> list[dict[str, Any]]:
         """Данные вкладки «Источники»: имя, состояние, оговорка."""
         result = self._request("/sources", timeout=6)

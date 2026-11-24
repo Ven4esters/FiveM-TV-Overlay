@@ -128,6 +128,21 @@ QLabel#badge[state="warn"] {
 }
 
 /* совсем тусклая подпись (пояснение рядом с заголовком) */
+/* Подсказка «что делать» под ошибкой. Приглушённо-жёлтый, не красный:
+   красный уже занят самой ошибкой, а это не вторая беда, а совет. */
+QLabel#hintText {
+    color: #E0C48A;
+    background-color: #221E15;
+    border: 1px solid #3A3222;
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 12px;
+}
+
+QLabel#errorText {
+    color: #F0A0A0;
+}
+
 QLabel#faint {
     color: #6E7488;
     font-size: 11px;

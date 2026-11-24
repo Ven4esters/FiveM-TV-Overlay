@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import urllib.parse
 from dataclasses import dataclass
 
 from ..core import registry
@@ -79,8 +80,8 @@ def resolve(url: str, translation_index: int | None = None) -> Resolved:
     if source is None:
         supported = ", ".join(registry.names())
         raise ResolveError(
-            "этот сайт не поддерживается",
-            f"Поддерживаются: {supported}. "
+            f"сайт не поддерживается: {urllib.parse.urlsplit(url).netloc or url[:40]}",
+            f"Поддерживаются: {supported}.\n"
             "Если это прямая ссылка на .m3u8 или .mp4 — вставьте её целиком, "
             "с параметрами после знака вопроса.",
         )

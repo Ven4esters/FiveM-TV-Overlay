@@ -189,6 +189,33 @@ def page_signatures(html: str) -> dict[str, str]:
     return found
 
 
+_VINFO_RE = {
+    "type": r"vInfo\.type\s*=\s*'([^']+)'",
+    "hash": r"vInfo\.hash\s*=\s*'([^']+)'",
+    "id": r"vInfo\.id\s*=\s*'(\d+)'",
+}
+"""Настоящие параметры серии со страницы плеера.
+
+Зачем: у СЕРИАЛОВ kodikplayer.com подменяет хэш на свой серверный и кладёт
+истинные значения в `vInfo`. Хэш из адреса (`/serial/37803/<hash>/720p`)
+после подмены не принимается — /ftor отвечает 404. Проверено на
+ani-media.online: адрес давал 404, а `vInfo` те же три значения — работали.
+
+У фильмов подмены нет, и там `vInfo` совпадает с адресом, поэтому брать
+его безопасно в любом случае.
+"""
+
+
+def page_vinfo(html: str) -> dict[str, str]:
+    """Настоящие type/hash/id из HTML плеера. Пусто — значит не сериал."""
+    found: dict[str, str] = {}
+    for name, pattern in _VINFO_RE.items():
+        match = re.search(pattern, html)
+        if match:
+            found[name] = match.group(1)
+    return found
+
+
 def fetch_links(ref: KodikRef) -> dict[str, list[dict[str, Any]]]:
     """Запросить /ftor и получить ссылки на все качества.
 
@@ -221,6 +248,12 @@ def fetch_links(ref: KodikRef) -> dict[str, list[dict[str, Any]]]:
         "id": ref.video_id,
         "info": "{}",
     }
+    # Сериалы: истинные type/hash/id лежат в vInfo, а не в адресе.
+    real = page_vinfo(html)
+    if real.get("hash") and real.get("id") and real.get("type"):
+        payload["type"] = real["type"]
+        payload["hash"] = real["hash"]
+        payload["id"] = real["id"]
     raw = _http(FTOR_URL, data=payload, referer=player_url)
     try:
         data = json.loads(raw)
