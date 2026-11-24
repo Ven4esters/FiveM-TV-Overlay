@@ -151,6 +151,10 @@ class YummyAnimeSource:
 
     name = _NAME
     state = SourceState.PARTIAL
+    matches_costly = True
+    """`matches` тянет JSON тайтла (218 КБ), чтобы понять, есть ли там Kodik.
+    В общей очереди такой ответ недопустим: он удорожает любую чужую ссылку.
+    Реестр спрашивает этот источник последним."""
     note = "через Kodik; плееры Alloha и CVH не поддерживаются, региональные блоки не обходим"
 
     def __init__(self) -> None:

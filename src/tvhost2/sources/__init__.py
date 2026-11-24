@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from ..core import registry
+from .alloha import AllohaSource, is_embed_host
 from .anidub import AnidubSource, is_anidub
 from .anidub_org import AnidubOrgSource, is_anidub_org
 from .base import YtDlpSource, extract_info, pick_direct_formats, pick_hls_qualities
@@ -14,12 +15,14 @@ from .kodik import KodikRef, KodikSource, decrypt_link, parse_player_url, rot18
 from .kodik_embed import KodikEmbedSource
 from .okru import OkRuSource, is_okru
 from .rutube import RutubeSource, video_id
+from .tvigle import TvigleSource, is_tvigle
 from .twitch import TwitchSource, channel_name, link_kind
 from .vk import VkSource, nominal_from_url
 from .youtube import YouTubeSource
 from .yummy import YummyAnimeSource, is_yummy
 
 __all__ = [
+    "AllohaSource",
     "AnidubOrgSource",
     "AnidubSource",
     "KodikEmbedSource",
@@ -27,6 +30,7 @@ __all__ = [
     "KodikSource",
     "OkRuSource",
     "RutubeSource",
+    "TvigleSource",
     "TwitchSource",
     "VkSource",
     "YouTubeSource",
@@ -37,7 +41,9 @@ __all__ = [
     "extract_info",
     "is_anidub",
     "is_anidub_org",
+    "is_embed_host",
     "is_okru",
+    "is_tvigle",
     "is_yummy",
     "link_kind",
     "nominal_from_url",
@@ -63,6 +69,10 @@ def register_all() -> None:
     # сайтов. Порядок здесь и есть приоритет.
     registry.register(KodikEmbedSource())
     registry.register(YummyAnimeSource())
+    # Alloha — до YummyAnime по смыслу: у yummyani он тоже встречается, но
+    # там его перехватывает свой источник, знающий про смешанные плееры.
+    registry.register(AllohaSource())
+    registry.register(TvigleSource())
     registry.register(TwitchSource())
     registry.register(OkRuSource())
     registry.register(AnidubSource())

@@ -355,13 +355,15 @@ class TestRegistry:
         достающие» сохраняется.
         """
         register_all()
-        assert registry.names()[:7] == [
+        assert registry.names()[:9] == [
             "Rutube",
             "VK Видео",
             "YouTube",
             "Kodik",
             "Kodik (встройка)",
             "YummyAnime",
+            "Alloha",
+            "Tvigle",
             "Twitch",
         ]
 

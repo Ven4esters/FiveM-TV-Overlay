@@ -64,8 +64,30 @@ class Registry:
         self._sources.append(source)
 
     def find(self, url: str) -> Source | None:
-        """Первый источник, который узнал ссылку."""
-        for source in self._sources:
+        """Первый источник, который узнал ссылку.
+
+        `matches` у большинства источников — это проверка строки: домен,
+        шаблон адреса. Такие отвечают мгновенно, и их можно спрашивать по
+        очереди для любой ссылки.
+
+        Но есть источники, которым для ответа нужно СКАЧАТЬ страницу
+        («сайт с плеером Kodik»): по адресу не угадать, стоит ли внутри
+        чужой плеер. Если спрашивать их в общей очереди, любой незнакомый
+        сайт начинает открываться секундами — человек видит «разбираю
+        ссылку…» вместо честного «не поддерживается». Поэтому такие
+        источники помечают себя `matches_costly` и спрашиваются ТОЛЬКО
+        после того, как быстрые отказались.
+        """
+        cheap = [s for s in self._sources if not getattr(s, "matches_costly", False)]
+        costly = [s for s in self._sources if getattr(s, "matches_costly", False)]
+        found = self._first_match(cheap, url)
+        if found is not None:
+            return found
+        return self._first_match(costly, url)
+
+    @staticmethod
+    def _first_match(sources: list[Source], url: str) -> Source | None:
+        for source in sources:
             try:
                 if source.matches(url):
                     return source
