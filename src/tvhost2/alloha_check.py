@@ -23,10 +23,39 @@ import contextlib
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from .sources import alloha, alloha_bnsi
 
-OUT = Path.cwd() / "alloha_check"
+# src/tvhost2/ → src/ → корень проекта
+ROOT = Path(__file__).resolve().parents[2]
+OUT = ROOT / "alloha_check"
+
+
+def pick_embed(info: dict[str, Any], tracks: list[dict[str, str]], page_url: str) -> str:
+    """Встройка, с которой имеет смысл работать.
+
+    Тонкость, из-за которой путал сам: на странице бывает ДВЕ встройки
+    Alloha — одна с `kp=`, другая с `token=`. Открытый API озвучек понимает
+    только `token`, поэтому «первая с kp» может дать пустой список, хотя
+    озвучки есть. Сначала берём ту, где есть токен; иначе — что дали.
+    """
+    candidates: list[str] = []
+    iframe = str((tracks[0] if tracks else {}).get("iframe") or "")
+    if iframe:
+        candidates.append(iframe)
+    candidates.append(str(info.get("embed") or ""))
+    try:
+        html = alloha.fetch_text(page_url) if hasattr(alloha, "fetch_text") else ""
+    except Exception:  # сеть могла отвалиться — не повод падать из-за диагностики
+        html = ""
+    if html:
+        for url in alloha.embeds_of(html):
+            candidates.append(url)
+    for url in candidates:
+        if url and alloha.site_token(url):
+            return url
+    return next((url for url in candidates if url), "")
 
 
 def _line(title: str) -> None:
@@ -43,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
 
     page_url = args[0].strip()
     OUT.mkdir(exist_ok=True)
+    print(f"Отчёты складываю в: {OUT}")
     stamp = time.strftime("%Y%m%d-%H%M%S")
     report: list[str] = [f"страница: {page_url}", ""]
 
@@ -66,8 +96,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     tracks: list[dict[str, str]] = list(info.get("tracks") or [])
-    embed = str((tracks[0] if tracks else {}).get("iframe") or info.get("embed") or "")
-    say(f"встройка: {embed[:100]}")
+    embed = pick_embed(info, tracks, page_url)
+    say(f"встройка: {embed[:110]}")
+    token = alloha.site_token(embed)
+    say(f"токен сайта: {token or 'НЕ НАЙДЕН — открытый API будет молчать'}")
     say(f"озвучек: {len(tracks)}" + ("" if tracks else " (API не ответил)"))
     for position, track in enumerate(tracks, 1):
         say(f"   {position}. {track.get('title', '?')}  (id {track.get('id', '?')})")
