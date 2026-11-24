@@ -278,19 +278,54 @@ def file_ids(player_html: str, embed: str = "") -> list[str]:
     return result
 
 
-def borth_for(player_html: str) -> str:
-    """Заголовок `Borth`: отпечаток | перестановка меты.
+def fingerprint_from_curl() -> str:
+    """Первая половина `Borth` — отпечаток браузера, снятый в `curl*.txt`.
 
-    Первая половина — sha256 от набора, который собирает плеер (UA, часовой
-    пояс, экран, язык, память, ядра). Canvas/WebGL/audio из браузера нам
-    недоступны; проверено, что сервер с этим не спорит.
+    Почему не считаем сами: это `sha256` от UA, часового пояса, экрана, языка,
+    памяти, ядер, canvas, WebGL и аудио (`c0` в `app.js`). Последние три из
+    Python не получить, а сервер, судя по ответам, сверяет отпечаток со
+    значением, которое сам же и выдал. В `curl.txt` он настоящий.
+    """
+    for value in learnt_borths():
+        first = value.split("|", 1)[0].strip()
+        if first:
+            return first
+    return ""
+
+
+def borth_for(player_html: str) -> str:
+    """Заголовок `Borth`: отпечаток | хвост из СВЕЖЕЙ страницы плеера.
+
+    Что выяснилось из расшифровки (отправка `/bnsi`, 667002):
+
+        'headers': {'Borth': iF + '|' + iP(hV, iz)}   // hV = iR(iS(iZ))
+        iZ = Q5()('meta[name=viewporti]').attr(...)
+
+    То есть хвост — не перестановка чего-то постоянного, а перестановка
+    меты `viewporti` ТОЙ страницы, по которой идёт запрос. Разобрал её
+    (24-26.11.2026): 88 символов, base64, внутри `nonce|метка времени|
+    подпись` 32 байта. У трёх наших `curl.txt` — три разных `nonce`, а
+    метки времени совпали с моментом копирования запроса.
+
+    Значит, хвост — подписанный сервером одноразовый пропуск на загрузку
+    страницы. Поэтому брать его из `curl.txt` нельзя: пока файл сохраняли
+    и запускали проверку, он успевал стать недействительным. Собираем
+    `Borth` из `player_html` — тот, что скачали сейчас, — и берём из
+    `curl.txt` только первую половину (отпечаток), если она там есть.
     """
     meta = meta_of(player_html)
-    suffix = borth_suffix(meta) if meta else ""
-    first = hashlib.sha256(
-        "||".join([_DEFAULT_UA, "Europe/Moscow", "1920x1080", "ru-RU", "8", "8"]).encode()
-    ).hexdigest()
-    return f"{first}|{suffix}"
+    if not meta:
+        # Мету не нашли — единственное, что осталось, это целиком `Borth`
+        # из `curl.txt`. Пусть будет: без него запрос уходит вовсе без
+        # пропуска, а так хоть какой-то шанс.
+        learnt = learnt_borths()
+        return learnt[0] if learnt else ""
+    first = fingerprint_from_curl()
+    if not first:
+        first = hashlib.sha256(
+            "||".join([_DEFAULT_UA, "Europe/Moscow", "1920x1080", "ru-RU", "8", "8"]).encode()
+        ).hexdigest()
+    return f"{first}|{borth_suffix(meta)}"
 
 
 def _post_form(url: str, payload: dict[str, Any], headers: dict[str, str]) -> tuple[int, str]:
@@ -438,9 +473,8 @@ def form_payload(embed: str, player_html: str) -> dict[str, Any]:
     }
     ref = ref_token_of(player_html)
     if not ref:
-        # В странице пусто — берём подпись из нашего `curl.txt`: сервер их
-        # выдаёт и обновляет каждый час, но и старая ещё принимается
-        # (браузер сам её раз в час меняет, а не при каждом запросе).
+        # В странице пусто — берём подпись из нашего `curl.txt`. Она живёт
+        # сутки (метка внутри на день вперёд), но лучше её, чем ничего.
         learnt = learnt_ref_tokens()
         ref = learnt[0] if learnt else ""
     if ref:
@@ -456,8 +490,9 @@ def attempts(embed: str, player_html: str) -> list[dict[str, Any]]:
     «контент не найден» невозможно понять, дело в номере файла, в регионе
     или в чём-то третьем, а по списку из шести попыток — видно.
     """
-    learnt = learnt_borths()
-    borth = learnt[0] if learnt else borth_for(player_html)
+    # Хвост `Borth` — одноразовый пропуск из меты СВЕЖЕЙ страницы (см.
+    # `borth_for`), поэтому подставлять сюда старый `curl.txt` нельзя.
+    borth = borth_for(player_html)
     kind = kind_of(player_html)
     ids = file_ids(player_html, embed)
     result: list[dict[str, Any]] = []

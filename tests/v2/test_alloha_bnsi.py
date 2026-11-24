@@ -160,7 +160,74 @@ class TestBorth:
 
     def test_without_meta_still_works(self) -> None:
         """Страница без меты не должна ронять источник."""
-        assert alloha_bnsi.borth_for("<html></html>").endswith("|")
+        assert alloha_bnsi.borth_for("<html></html>") == ""
+
+
+class TestBorthIsFresh:
+    """Хвост `Borth` — одноразовый пропуск из меты СВЕЖЕЙ страницы.
+
+    Разбор 26.11.2026: хвост (88 символов) — это `iP(iR(iS(meta viewporti)))`,
+    а сама мета декодируется в `nonce|метка времени|подпись` 32 байта.
+    У трёх `curl.txt` заказчика — три разных `nonce`, метки совпадают с
+    моментом копирования запроса. То есть сервер выдаёт пропуск на каждую
+    загрузку страницы плеера.
+
+    Ошибка, которую это правило закрывает: девятый и десятый прогоны брали
+    `Borth` ЦЕЛИКОМ из `curl.txt` (хвосту было 9-20 минут), а мету только что
+    скачанной страницы выбрасывали. Проверялась при этом всегда одна и та же
+    пара «старый хвост + старый отпечаток».
+    """
+
+    # Хвост из curl.txt (aEpHM005…) и мета свежей страницы — разные строки.
+    OLD_TAIL = (
+        "aEpHM005ZzRUekF8MTc5NTU1MzA4Nnw2ZGNzNDd5ZmRrc2hfSzU3Ymh2S3dUeFJMU0lKelphS0tUSl9pcVlQLTdJ"
+    )
+    CURL = (
+        'curl.exe ^"https://x.live/bnsi/movies/1836464^" ^\n'
+        "  -X POST ^\n"
+        '  -H ^"Borth: d07bc5a1ca5840c001b152adaa937e86a48b74e77eded89a18395a0f'
+        "314bc33f^|" + OLD_TAIL + '^" ^\n'
+        '  --data-raw ^"token=abc^&av1=true^&autoplay=0^"'
+    )
+
+    def _folder(self, tmp_path, monkeypatch: pytest.MonkeyPatch):
+        folder = tmp_path / "alloha_check"
+        folder.mkdir()
+        (folder / "curl.txt").write_text(self.CURL, encoding="utf-8")
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
+        return folder
+
+    def test_first_half_from_curl(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._folder(tmp_path, monkeypatch)
+        assert alloha_bnsi.fingerprint_from_curl() == (
+            "d07bc5a1ca5840c001b152adaa937e86a48b74e77eded89a18395a0f314bc33f"
+        )
+
+    def test_tail_comes_from_page_not_curl(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Главное: хвост — из свежей страницы, первая половина — из curl."""
+        self._folder(tmp_path, monkeypatch)
+        borth = alloha_bnsi.borth_for(PLAYER_HTML)
+        first, tail = borth.split("|", 1)
+        assert first == "d07bc5a1ca5840c001b152adaa937e86a48b74e77eded89a18395a0f314bc33f"
+        assert tail != self.OLD_TAIL, "старый пропуск из curl.txt брать нельзя"
+        assert tail == alloha_bnsi.borth_suffix(alloha_bnsi.meta_of(PLAYER_HTML))
+
+    def test_attempts_send_fresh_tail(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """`attempts()` не подставляет старый `Borth` целиком."""
+        self._folder(tmp_path, monkeypatch)
+        sent: list[dict] = []
+
+        def fake(url: str, payload: dict, headers: dict) -> tuple[int, str]:
+            sent.append(dict(headers))
+            return 404, "{}"
+
+        monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
+        alloha_bnsi.attempts("https://x.live/?token=abc&translation=96", PLAYER_HTML)
+        assert sent
+        for headers in sent:
+            tail = headers["Borth"].split("|", 1)[1]
+            assert tail != self.OLD_TAIL
+            assert tail == alloha_bnsi.borth_suffix(alloha_bnsi.meta_of(PLAYER_HTML))
 
 
 class TestRoutes:

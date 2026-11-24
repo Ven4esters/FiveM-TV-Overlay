@@ -133,12 +133,25 @@ def _player_block(report: Report, embed: str, page_url: str) -> tuple[str, list[
     ids = alloha_bnsi.file_ids(player)
     report.say(f"файлов в fileList: {len(ids)} → {', '.join(ids[:6]) or '—'}")
     report.say(f"тип: {alloha_bnsi.kind_of(player)}")
-    learnt = alloha_bnsi.learnt_borths()
-    if learnt:
-        report.say(f"Borth: ВЗЯТ ИЗ curl.txt — {len(learnt[0])} символов (настоящий)")
+    fresh = alloha_bnsi.borth_for(player)
+    fingerprint = alloha_bnsi.fingerprint_from_curl()
+    if meta and fingerprint:
+        report.say(
+            f"Borth: отпечаток из curl.txt + СВЕЖИЙ хвост из этой страницы ({len(fresh)} символов)"
+        )
+    elif meta:
+        report.say(
+            f"Borth: хвост из этой страницы, отпечаток посчитан ({len(fresh)} символов) — "
+            "curl.txt не нашёлся, сервер может не принять"
+        )
     else:
-        size = len(alloha_bnsi.borth_for(player))
-        report.say(f"Borth собран: {size} символов (из UA — сервер может не принять)")
+        report.say("Borth: меты viewporti в странице НЕТ — пропуска нет, будет отказ")
+    old_borths = alloha_bnsi.learnt_borths()
+    if old_borths and meta:
+        report.say(
+            "Borth из curl.txt ЦЕЛИКОМ больше не отправляется: его хвост — "
+            "пропуск на ту загрузку страницы (проверка 26.11.2026)"
+        )
     report.say(f"пойдут номера: {', '.join(ids[:6])}")
     first = ids[0] if ids else ""
     report.say(
