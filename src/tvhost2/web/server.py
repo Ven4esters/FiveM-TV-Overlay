@@ -34,6 +34,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from .. import __version__
 from ..audio import loudness
 from ..core import diagnostics as diag
 from ..core import registry
@@ -109,7 +110,9 @@ class OverlayHandler(BaseHTTPRequestHandler):
     Адрес прокси приходит параметром класса через `make_handler`.
     """
 
-    server_version = "FiveMVideoOverlay/2.0"
+    # Версию не хардкодим: она одна на пакет, тег и окно пульта. Иначе
+    # в заголовке и в `/` остаётся «2.0», пока весь проект уже 2.1.
+    server_version = f"FiveMVideoOverlay/{__version__}"
     protocol_version = "HTTP/1.0"
     proxy_base = "http://127.0.0.1:9001"
 
@@ -223,7 +226,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
         return None
 
     def _index(self) -> None:
-        self._json(200, {"app": "FiveM Video Overlay", "version": "2.0"})
+        self._json(200, {"app": "FiveM Video Overlay", "version": __version__})
 
     def _list_sessions(self) -> None:
         items = [
