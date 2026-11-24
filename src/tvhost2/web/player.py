@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import html
+import json
 import urllib.parse
 
 from .session import Session
@@ -179,6 +180,7 @@ SCRIPT = """
   // Прямой эфир: у live нет длительности, перемотка бессмысленна, а hls.js
   // должен держаться края плейлиста, иначе отставание растёт на глазах.
   var LIVE = __LIVE__;
+  var DIRECT = __DIRECT__;
   var v = document.getElementById("v");
   var bigplay = document.getElementById("bigplay");
   var toastEl = document.getElementById("toast");
@@ -286,7 +288,48 @@ SCRIPT = """
   });
 
   // ---------------- загрузка потока ----------------
+  // DIRECT = true: качества это прямые mp4-файлы, а не HLS-плейлисты.
+  // hls.js такие «варианты» не разбирает и не играет ВООБЩЕ ничего, без
+  // ошибки в консоли (проверено на anidub.org: видео молча стояло на 0).
+  // Поэтому здесь hls.js не используется: качество меняем сами, подменой src.
+  var inited = false;
+  var levels = [];          // [{label, url}] — при DIRECT
+  var currentLevel = -1;
+
+  function switchLevel(index) {
+    if (index < 0 || index >= levels.length || index === currentLevel) return;
+    var wasPlaying = !v.paused;
+    var at = v.currentTime;
+    currentLevel = index;
+    v.src = levels[index].url;
+    // Возврат на ту же секунду: человек включил 1080p, чтобы смотреть
+    // дальше, а не чтобы начать сначала.
+    v.addEventListener("loadedmetadata", function once() {
+      v.removeEventListener("loadedmetadata", once);
+      try { v.currentTime = at; } catch (e) {}
+      if (wasPlaying) startPlayback();
+      toast("Качество: " + levels[index].label);
+    });
+  }
+
   function attach() {
+    if (DIRECT) {
+      levels = JSON.parse(document.getElementById("levels").textContent || "[]");
+      if (!levels.length) {
+        showError("Нет доступных качеств", "источник не отдал ни одного варианта");
+        return;
+      }
+      currentLevel = 0;   // первый в списке — лучшее качество
+      v.src = levels[0].url;
+      v.addEventListener("loadedmetadata", function () {
+        hideError();
+        // Настоящий размер кадра важнее обещанного: источник мог соврать.
+        if (v.videoHeight) levels[currentLevel].label = v.videoHeight + "p";
+        startPlayback();
+      });
+      if (LIVE) bar.classList.add("live");
+      return;
+    }
     var src = BASE + "/stream/" + SID;
     if (window.Hls && window.Hls.isSupported()) {
       hls = new window.Hls({
@@ -349,7 +392,14 @@ SCRIPT = """
       case "volume":     v.volume = Math.max(0, Math.min(1, Number(val))); v.muted = false; break;
       case "mute":       v.muted = (val === true || val === "true" || val === 1); break;
       case "normalize":  setNormalize(val === true || val === "true" || val === 1); break;
-      case "quality":    setQuality(Number(val)); break;
+      case "quality":
+        if (DIRECT) {
+          var want = String(val || "").replace(/[^0-9]/g, "");
+          for (var i = 0; i < levels.length; i++) {
+            if (String(levels[i].height) === want) { switchLevel(i); return; }
+            }
+          return;
+        }    setQuality(Number(val)); break;
       case "subs":       setSubtitles(Number(val)); break;
       case "trans":      pickTranslation(Number(val)); break;
       case "restart":    v.currentTime = 0; startPlayback(); break;
@@ -650,6 +700,31 @@ SCRIPT = """
 """
 
 
+def levels_json(session: object) -> str:
+    """Список качеств для режима прямых файлов (mp4).
+
+    Почему JSON в странице, а не отдельный запрос: список нужен плееру
+    ДО первого кадра, а гонять лишний HTTP в CEF ради пяти строк — это
+    лишняя секунда к старту.
+
+    Ссылки идут через наш мост: подпись CDN привязана к IP, и браузер
+    игры не должен ходить к VK напрямую.
+    """
+    stream = getattr(session, "stream", None)
+    if stream is None or not getattr(stream, "is_direct_file", False):
+        return "[]"
+    items = []
+    for quality in stream.qualities:
+        items.append(
+            {
+                "height": quality.height,
+                "label": quality.label,
+                "url": "/hls?url=" + urllib.parse.quote(quality.url, safe=""),
+            }
+        )
+    return json.dumps(items, ensure_ascii=False)
+
+
 def render(session: Session, base: str, hls_js_url: str) -> str:
     """HTML страницы-плеера для одной сессии.
 
@@ -662,6 +737,11 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
         SCRIPT.replace("__SID__", _js(session.sid))
         .replace("__BASE__", _js(base))
         .replace("__LIVE__", "true" if session.stream and session.stream.is_live else "false")
+        .replace(
+            "__DIRECT__",
+            "true" if session.stream and session.stream.is_direct_file else "false",
+        )
+        .replace("__LEVELS__", levels_json(session))
         .replace("__BACK__", str(SKIP_BACK_S))
         .replace("__FWD__", str(SKIP_FWD_S))
     )
@@ -679,6 +759,7 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
   <video id="v" playsinline preload="auto">{tracks}</video>
   <button id="bigplay" type="button" aria-label="Запустить">@PLAY@</button>
   <!-- Иконки для JS: внутри скрипта SVG не поставить, кавычки рвут литерал -->
+  <script type="application/json" id="levels">__LEVELS__</script>
   <template data-icon="play">@PLAY@</template>
   <template data-icon="pause">@PAUSE@</template>
   <template data-icon="mute">@MUTE@</template>
@@ -715,6 +796,11 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
 </body>
 </html>
 """
+    # __LEVELS__ живёт в РАЗМЕТКЕ (скрытый JSON для режима прямых файлов), а
+    # не в скрипте — поэтому подставляется здесь. Раньше замены шли только
+    # по SCRIPT, и плеер читал строку "__LEVELS__" как JSON: «is not valid
+    # JSON», видео не стартовало вовсе.
+    markup = markup.replace("__LEVELS__", levels_json(session))
     # Иконки подставляются отдельным проходом, а не в f-строке: внутри SVG
     # есть фигурные скобки от стилей, и f-строка на них ломается. Один
     # проход по словарю читается лучше, чем цепочка .replace().

@@ -128,6 +128,18 @@ class Stream:
     headers: dict[str, str] = field(default_factory=dict)
     duration_s: int = 0
     is_live: bool = False
+    is_direct_file: bool = False
+    """Качества — прямые файлы (mp4), а не HLS-плейлисты.
+
+    Нужно плееру: hls.js не умеет mp4, и если скормить ему master, где
+    варианты — mp4-файлы, он молча не проигрывает ничего. При этом признаке
+    плеер переключает качество сам, меняя `video.src`.
+
+    Откуда взялось: у anidub.org (новый плеер cdnvideohub) HLS-мастер отдаёт
+    варианты ссылками вида `/expires/…/type/2/sig/…` — без хоста, и наш мост
+    превращает их в мусор. Прямые mp4 там работают, а HLS — нет.
+    """
+
     audio_tracks: tuple[dict[str, Any], ...] = ()
     """Список озвучек (Kodik, кинотеатры): [{"id","title","hash","type"}].
 

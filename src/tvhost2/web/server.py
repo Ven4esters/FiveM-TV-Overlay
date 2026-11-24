@@ -464,12 +464,43 @@ class OverlayHandler(BaseHTTPRequestHandler):
         master = hls_bridge.build_master(quality_list, audio)
         return self._playlist(master.encode())
 
+    def _stream_headers(self, target: str) -> dict[str, str]:
+        """Заголовки сессии, к которой относится этот адрес.
+
+        Ищем по совпадению хоста с качествами/аудио потоков живых сессий.
+        Дорого? Сессий единицы, сравнение строковое — дешевле, чем хранить
+        в адресе моста ещё и sid (адрес и без того длинный, а CDN иногда
+        режет длинные URL).
+        """
+        host = urllib.parse.urlsplit(target).netloc.lower()
+        if not host:
+            return {}
+        for session in STATE.sessions.all():
+            stream = session.stream
+            if stream is None or not stream.headers:
+                continue
+            candidates = [q.url for q in stream.qualities]
+            if stream.audio_url:
+                candidates.append(stream.audio_url)
+            if any(urllib.parse.urlsplit(url).netloc.lower() == host for url in candidates):
+                return dict(stream.headers)
+        return {}
+
     def _bridge(self, query: dict[str, list[str]]) -> None:
-        """Универсальный мост: плейлист или сегмент источника."""
+        """Универсальный мост: плейлист или сегмент источника.
+
+        Заголовки берутся из ДВУХ мест: `_referer_headers` знает про домены
+        (Kodik, Rutube, VK), а `Stream.headers` — про конкретную подпись.
+        Второе важнее и перекрывает первое: у okcdn подпись привязана к
+        отпечатку браузера (`srcAg=GECKO`), и запрос с Chrome-UA получает
+        400, даже если адрес правильный. Проверено живьём: без этого видео
+        anidub.org не играло вовсе.
+        """
         target = (query.get("url") or [""])[0]
         if not target:
             return self._error_playlist("нужен параметр url", 400)
         headers = _referer_headers(target)
+        headers.update(self._stream_headers(target))
         try:
             # file:// — склейка ffmpeg (видео+звук): отдаём плейлист и сегменты
             # с диска тем же путём, что и сетевые. Отдельной ветки не нужно:
