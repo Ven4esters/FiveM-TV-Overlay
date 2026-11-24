@@ -13,11 +13,18 @@ import sys
 
 import pytest
 
-pytest.importorskip("PySide6")
-
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication  # noqa: E402
+# Проверять надо не только наличие пакета, но и работоспособность Qt:
+# PySide6 может стоять, а системных библиотек (libEGL.so.1 и подобных) на
+# headless-раннере нет — тогда импорт падает с ImportError, и pytest
+# роняет ВСЮ сессию на сборе тестов, а не пропускает один модуль.
+# Именно так CI и краснел: «Interrupted: 1 error during collection» за две
+# секунды, без единого запущенного теста.
+try:
+    from PySide6.QtWidgets import QApplication  # noqa: E402
+except ImportError as exc:
+    pytest.skip(f"Qt без системных библиотек: {exc}", allow_module_level=True)
 
 
 @pytest.fixture(scope="module")
