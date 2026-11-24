@@ -755,9 +755,16 @@ class Panel(QWidget):
         self.episode_box.clear()
         if titles:
             self.episode_box.addItems(titles)
-            current = int(data.get("episode") or 0)
+            # Номер может прийти строкой («3») — привод приведением, но без
+            # падения: список серий не должен ломать пульт.
+            try:
+                current = int(data.get("episode") or 0)
+            except (TypeError, ValueError):
+                current = 0
             if 1 <= current <= len(titles):
                 self.episode_box.setCurrentIndex(current - 1)
+            season = str(data.get("episodeSeason") or "").strip()
+            self.episode_box.setToolTip(f"{season} сезон · серия" if season else "Серия")
         self.episode_box.blockSignals(False)
         self.episode_box.setVisible(bool(can))
 
