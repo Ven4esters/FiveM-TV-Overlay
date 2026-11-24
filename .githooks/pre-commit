@@ -1,0 +1,13 @@
+#!/bin/sh
+# Ровно те три проверки, на которых падал CI перед этим.
+# Файл подключается командой:  git config core.hooksPath .githooks
+set -e
+PY=python
+[ -x ".venv/Scripts/python.exe" ] && PY=".venv/Scripts/python.exe"
+[ -x ".venv/bin/python" ] && PY=".venv/bin/python"
+
+echo "[hook] ruff format --check"
+"$PY" -m ruff format --check src tests tools
+echo "[hook] ruff check"
+"$PY" -m ruff check src tests tools
+echo "[hook] готово"

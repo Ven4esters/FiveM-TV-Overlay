@@ -160,6 +160,27 @@ def _season_episode(path: tuple[str, ...]) -> tuple[str, str]:
     return "", ""
 
 
+def browser_ids() -> list[str]:
+    """Номера файлов, которые РЕАЛЬНО запрашивал браузер (из `curl*.txt`).
+
+    Это самый достоверный источник: там лежит ровно тот адрес, который у
+    заказчика сработал. Проверять его надо первым — даже если в `fileList`
+    этот номер стоит далеко (на живом образце `active` был из другой серии,
+    и `1836464` оказался седьмым, за пределами первых шести попыток).
+    """
+    found: list[str] = []
+    for path in curl_files():
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for match in re.finditer(r"/bnsi/(?:movies|trailers)/(\d+)", text):
+            ident = match.group(1)
+            if ident not in found:
+                found.append(ident)
+    return found
+
+
 def file_ids(player_html: str, embed: str = "") -> list[str]:
     """Id файлов для `POST /bnsi` — в порядке, в каком их стоит пробовать.
 
@@ -194,6 +215,9 @@ def file_ids(player_html: str, embed: str = "") -> list[str]:
         for match in re.finditer(r'"id"\s*:\s*"?(\d+)"?', player_html or ""):
             add(match.group(1))
         return result
+
+    for ident in browser_ids():
+        add(ident)
 
     active = active_file(player_html)
     # ПЕРВЫМ — `id_file`, а не `id`. Это выяснилось из настоящего запроса
@@ -232,13 +256,17 @@ def file_ids(player_html: str, embed: str = "") -> list[str]:
 
     # 2) та же серия в запрошенной озвучке
     if wanted_key:
-        add_all(lambda path: key_of(path)[:2] == (season, episode)
-                and _translation_key(path) == wanted_key)
+        add_all(
+            lambda path: (
+                key_of(path)[:2] == (season, episode) and _translation_key(path) == wanted_key
+            )
+        )
         # 3) первая серия запрошенной озвучки
         for path, node in ordered:
             if _translation_key(path) == wanted_key:
                 add(node.get("id"))
                 break
+
     # 4) всё остальное, запрошенная озвучка раньше прочих
     def preferred(path: tuple[str, ...]) -> bool:
         return bool(wanted_key) and _translation_key(path) == wanted_key

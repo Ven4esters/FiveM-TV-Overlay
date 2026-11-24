@@ -335,9 +335,7 @@ class TestServerFingerprint:
         assert len(expected) == 64
         assert expected.isalnum()
 
-    def test_uap_of_remembers_and_survives_failure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_uap_of_remembers_and_survives_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         alloha_bnsi._UAP_CACHE.clear()
 
         def boom(request: object, timeout: int) -> object:
@@ -357,15 +355,11 @@ class TestServerFingerprint:
 
         monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
         monkeypatch.setattr(alloha_bnsi, "_uap_of", lambda _realm: SARN_UAP)
-        rows = alloha_bnsi.try_real_borth(
-            "https://x.live/?token=abc", PLAYER_HTML, ["111"]
-        )
+        rows = alloha_bnsi.try_real_borth("https://x.live/?token=abc", PLAYER_HTML, ["111"])
         assert rows and rows[0]["status"] == 404
         assert seen[0].startswith(SARN_UAP + "|")
 
-    def test_real_borth_without_uap_falls_back(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_real_borth_without_uap_falls_back(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Нет ответа `/sarn` — берём реконструкцию, а не выдуманные числа."""
         seen: list[str] = []
 
@@ -375,9 +369,7 @@ class TestServerFingerprint:
 
         monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
         monkeypatch.setattr(alloha_bnsi, "_uap_of", lambda _realm: "")
-        rows = alloha_bnsi.try_real_borth(
-            "https://x.live/?token=abc", PLAYER_HTML, ["111"]
-        )
+        rows = alloha_bnsi.try_real_borth("https://x.live/?token=abc", PLAYER_HTML, ["111"])
         assert rows and "uap" not in rows[0]["name"]
         assert seen and not seen[0].startswith(SARN_UAP)
 
@@ -505,8 +497,8 @@ class TestCmdCopyAsCurl:
         '  -H ^"referer: https://tories-as.stravers.live/?token_movie=dc27^" ^\n'
         '  -H ^"x-requested-with: XMLHttpRequest^" ^\n'
         '  --data-raw ^"token=5286c49a^&av1=true^&autoplay=0'
-        '^&_ref=s1.1795636688_b9b59a5200accf9ca738b61c'
-        ".aHR0cHM6Ly96bG9yZC5vcmc^&audio=^&subtitle=^\""
+        "^&_ref=s1.1795636688_b9b59a5200accf9ca738b61c"
+        '.aHR0cHM6Ly96bG9yZC5vcmc^&audio=^&subtitle=^"'
     )
 
     def test_url_is_clean(self) -> None:
@@ -520,7 +512,7 @@ class TestCmdCopyAsCurl:
 
         body = alloha_replay.parse_curl(self.CURL).body.decode()
         assert body.startswith("token=5286c49a&av1=true&autoplay=0&_ref=s1.")
-        assert body.endswith("&audio=&subtitle="), "хвостовой ^ от ^\" надо снять"
+        assert body.endswith("&audio=&subtitle="), 'хвостовой ^ от ^" надо снять'
         assert "^" not in body
 
     def test_header_names_clean(self) -> None:
@@ -566,7 +558,7 @@ class TestCmdCopyAsCurl:
 
         assert alloha_replay._unescape_cmd("nothing special") == "nothing special"
         assert alloha_replay._unescape_cmd("a^&b") == "a&b"
-        assert alloha_replay._unescape_cmd("^\"quoted^\"") == '"quoted"'
+        assert alloha_replay._unescape_cmd('^"quoted^"') == '"quoted"'
 
 
 class TestRefToken:
@@ -583,7 +575,7 @@ class TestRefToken:
         assert alloha_bnsi.ref_token_of("userParam = { refToken: '', device: 0 }") == ""
 
     def test_read_from_filled_page(self) -> None:
-        page = f'userParam = {{ {self.FILLED} }}'
+        page = f"userParam = {{ {self.FILLED} }}"
         assert alloha_bnsi.ref_token_of(page).startswith("s1.1795636688_")
 
     def test_double_quotes_too(self) -> None:
@@ -598,12 +590,13 @@ class TestRefToken:
             return 404, "{}"
 
         monkeypatch.setattr(alloha_bnsi, "_post_form", fake)
+
         def no_json(url: str, payload: dict, headers: dict) -> tuple[int, str]:
             return 404, "{}"
 
         monkeypatch.setattr(alloha_bnsi, "_post_json", no_json)
         monkeypatch.setattr(alloha_bnsi, "learnt_ref_tokens", lambda: [])
-        page = f'userParam = {{ {self.FILLED} }}'
+        page = f"userParam = {{ {self.FILLED} }}"
         embed = "https://x.live/?token=5286c49a9d29cad731353b68d3f1f5"
         alloha_bnsi.try_variants(embed, page, ["1"])
         refs = [item.get("_ref") for item in sent if "_ref" in item]
@@ -674,25 +667,24 @@ class TestBrowserTruth:
     """
 
     CURL = (
-        "curl.exe ^\"https://tories-as.stravers.live/bnsi/movies/1836464^\" ^\n"
+        'curl.exe ^"https://tories-as.stravers.live/bnsi/movies/1836464^" ^\n'
         "  --compressed ^\n"
         "  -X POST ^\n"
         '  -H ^"User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0)'
         ' Gecko/20100101 Firefox/160.0^" ^\n'
         '  -H ^"Borth: d07bc5a1ca5840c001b152adaa937e86a48b74e77eded89a18395a0f'
-        '314bc33f^|aEpHM005ZzRUekF8MTc5NTU1MzA4Nnw2ZGNzNDd5ZmRrc2hfSzU3Ymh2S3dUeFJ'
+        "314bc33f^|aEpHM005ZzRUekF8MTc5NTU1MzA4Nnw2ZGNzNDd5ZmRrc2hfSzU3Ymh2S3dUeFJ"
         'MU0lKelphS0tUSl9pcVlQLTdJ^" ^\n'
         '  -H ^"X-Requested-With: XMLHttpRequest^" ^\n'
         '  --data-raw ^"token=5286c49a9d29cad731353b68d3f1f5^&av1=true'
-        '^&autoplay=0^&_ref=s1.1795639479.383dbf8d82a5e71102059964'
+        "^&autoplay=0^&_ref=s1.1795639479.383dbf8d82a5e71102059964"
         '.aHR0cHM6Ly96bG9yZC5vcmcv^&audio=^&subtitle=^"'
     )
 
     def test_id_file_first(self) -> None:
         """1876464 → первым: именно его просит браузер."""
         embed = (
-            "https://tories-as.stravers.live/?token_movie=dc27"
-            "&translation=96&season=1&episode=1"
+            "https://tories-as.stravers.live/?token_movie=dc27&translation=96&season=1&episode=1"
         )
         ids = alloha_bnsi.file_ids(PLAYER_HTML, embed)
         assert ids[0] == "1836464", ids[:4]
@@ -712,10 +704,7 @@ class TestBrowserTruth:
     def test_borth_is_not_sha256_of_ua(self) -> None:
         import hashlib
 
-        ua = (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) "
-            "Gecko/20100101 Firefox/160.0"
-        )
+        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:160.0) Gecko/20100101 Firefox/160.0"
         assert hashlib.sha256(ua.encode()).hexdigest() != (
             "d07bc5a1ca5840c001b152adaa937e86a48b74e77eded89a18395a0f314bc33f"
         )
@@ -773,3 +762,36 @@ class TestCurlFilesDiscovery:
         assert alloha_bnsi.curl_files() == []
         assert alloha_bnsi.learnt_borths() == []
         assert alloha_bnsi.learnt_ref_tokens() == []
+
+
+class TestBrowserIdWins:
+    """Номер из браузерного запроса идёт первым, даже если в fileList он далеко."""
+
+    def test_id_from_curl_goes_first(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        folder = tmp_path / "alloha_check"
+        folder.mkdir()
+        (folder / "curl-2.txt").write_text(
+            'curl.exe ^"https://x.live/bnsi/movies/555^" --data-raw ^"token=1^"',
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
+        assert alloha_bnsi.browser_ids() == ["555"]
+        ids = alloha_bnsi.file_ids(PLAYER_HTML, "")
+        assert ids[0] == "555", ids[:3]
+
+    def test_no_curl_no_change(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        empty = tmp_path / "nothing"
+        empty.mkdir()
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", empty)
+        assert alloha_bnsi.browser_ids() == []
+        ids = alloha_bnsi.file_ids(PLAYER_HTML, "")
+        assert ids[:2] == ["1836464", "1836882"]
+
+    def test_trailer_paths_too(self, tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+        folder = tmp_path / "alloha_check"
+        folder.mkdir()
+        (folder / "curl.txt").write_text(
+            "curl 'https://x.live/bnsi/trailers/777'", encoding="utf-8"
+        )
+        monkeypatch.setattr(alloha_bnsi, "CHECK_DIR", folder)
+        assert alloha_bnsi.browser_ids() == ["777"]

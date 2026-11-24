@@ -135,9 +135,7 @@ def _player_block(report: Report, embed: str, page_url: str) -> tuple[str, list[
     report.say(f"тип: {alloha_bnsi.kind_of(player)}")
     learnt = alloha_bnsi.learnt_borths()
     if learnt:
-        report.say(
-            f"Borth: ВЗЯТ ИЗ curl.txt — {len(learnt[0])} символов (браузерный, настоящий)"
-        )
+        report.say(f"Borth: ВЗЯТ ИЗ curl.txt — {len(learnt[0])} символов (настоящий)")
     else:
         size = len(alloha_bnsi.borth_for(player))
         report.say(f"Borth собран: {size} символов (из UA — сервер может не принять)")
