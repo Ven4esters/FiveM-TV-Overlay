@@ -61,7 +61,11 @@ class Session:
     quality_height: int = 0
     """Выбранное качество. 0 — «Авто»: плеер решает сам по битрейту."""
 
-    volume: float = 1.0
+    volume: float = 0.2
+    """Громкость по умолчанию — 20 %.
+
+    Проверено жалобой: старт на 100 % бил по ушам — игра запускается
+    поверх видео, и первый звук приходил как раз на полной громкости."""
     muted: bool = False
     normalize: bool = False
     """Выравнивание громкости. Усиление считает модуль audio.loudness."""
@@ -98,6 +102,11 @@ class Session:
             "muted": self.muted,
             "normalize": self.normalize,
             "translation": self.translation_title,
+            # Номер выбранной озвучки: пульт держит выпадающий список, и без
+            # номера он не может показать, какая озвучка играет на самом
+            # деле — жалоба «выбор не действует, играет другая» была ровно
+            # об этом (сменили с игрой, пульт остался на прежней строке).
+            "translationIndex": self.translation_index,
             "qualities": [q.label for q in self.stream.qualities] if self.stream else [],
             "translations": [
                 t.get("title", "") for t in (self.stream.audio_tracks if self.stream else ())

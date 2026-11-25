@@ -88,6 +88,21 @@ def nominal_from_url(url: str) -> int:
     return int(match.group(1)) if match else 0
 
 
+VK_CDN_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    ),
+    "Referer": "https://vk.com/",
+}
+"""Что обязан представить клиент, чтобы CDN VK отдал поток.
+
+Проверено 23.11.2026: без Chrome-UA `okcdn.ru` отвечает 400 Bad Request,
+потому что ссылка подписана с `srcAg/CHROME`. На это и жаловались —
+«Замер не удался» на VK.
+"""
+
+
 class VkSource(YtDlpSource):
     name = "VK Видео"
     hosts = ("vkvideo.ru/", "vk.com/video", "vk.ru/video", "m.vkvideo.ru/")
@@ -182,4 +197,10 @@ class VkSource(YtDlpSource):
             duration_s=int(info.get("duration") or 0),
             is_live=bool(info.get("is_live")),
             state=self.state,
+            headers=dict(VK_CDN_HEADERS),
+            # Заголовки нужны не плееру (в браузере игры всё и так работает),
+            # а ЗАМЕРУ ГРОМКОСТИ: ffmpeg по умолчанию представляется как
+            # «Lavf/60.16.100», и CDN VK (okcdn.ru) отвечает 400 — отсюда
+            # «замер не удался». С Chrome-UA тот же адрес отдаёт 200 и
+            # application/x-mpegURL (проверено 23.11.2026).
         )

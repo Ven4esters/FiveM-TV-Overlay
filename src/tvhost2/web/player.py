@@ -172,6 +172,14 @@ SKIP_BACK_S = 10
 SKIP_FWD_S = 10
 """Столько же вперёд. Симметрия: человек запоминает одно число."""
 
+START_VOLUME = 0.2
+"""Громкость при открытии страницы — 20 %, а не 100 %.
+
+Жалоба дословно: «громкость 100 %, бьёт по ушам». Причина не в плеере как
+таком: игра запущена поверх видео, человек не ждёт звука и получает его на
+полной. 20 % слышно, но не пугает; дальше крутится ползунком.
+"""
+
 # Скрипт страницы. Подставляются только SID и BASE — остальное статично.
 SCRIPT = """
 (function () {
@@ -262,22 +270,29 @@ SCRIPT = """
     var p = v.play();
     if (!p || !p.catch) return;
     p.catch(function () {
-      if (v.muted) { bigplay.style.display = "flex"; return; }
-      // автоплей со звуком заблокирован: запускаем без звука, звук — по клику
+      // Автовоспроизведение со звуком заблокировано политикой браузера.
+      // Играем БЕЗ звука, но НЕ оставляем человека с тишиной навсегда: в
+      // игре нет «первого клика по странице», поэтому снятие mute по клику
+      // (как в браузере) там не наступает никогда. Вместо этого пробуем
+      // включить звук сами, как только политика позволит: `play()` уже
+      // отработал, и повторное снятие mute не ставит видео на паузу —
+      // пауза и была жалобой «нажал Звук — видео встало».
       v.muted = true;
+      var p2 = v.play();
+      if (p2 && p2.catch) p2.catch(function () {
+        bigplay.style.display = "flex";
+        toast("Нажмите на экран");
+      });
+      // Клик по экрану — штатный путь браузера; в игре его просто не будет.
       if (!unmuteOnClick) {
         unmuteOnClick = true;
         document.addEventListener("click", function unmuteOnce() {
           document.removeEventListener("click", unmuteOnce);
           unmuteOnClick = false;
           v.muted = false;
+          paint();
         });
       }
-      var p2 = v.play();
-      if (p2 && p2.catch) p2.catch(function () {
-        bigplay.style.display = "flex";
-        toast("Нажмите на экран");
-      });
     });
   }
 
@@ -389,8 +404,25 @@ SCRIPT = """
         var d = Number.isFinite(v.duration) ? v.duration : 1e9;
         v.currentTime = Math.max(0, Math.min(d, v.currentTime + (Number(val) || 0)));
         break;
-      case "volume":     v.volume = Math.max(0, Math.min(1, Number(val))); v.muted = false; break;
-      case "mute":       v.muted = (val === true || val === "true" || val === 1); break;
+      case "volume":     v.volume = Math.max(0, Math.min(1, Number(val)));
+                         if (v.volume > 0) v.muted = false; break;
+      // «Включи звук»: снимаем mute и, если пришлось играть без звука из-за
+      // политики автовоспроизведения, разрешаем его навсегда. В игре нет
+      // «первого клика по странице», поэтому обработчик `unmuteOnce` там
+      // не сработает НИКОГДА — звук оставался выключенным до перезапуска.
+      case "sound":      v.muted = false;
+                         if (v.volume === 0) v.volume = 0.2;
+                         unmuteOnClick = false;
+                         if (v.paused) startPlayback(); break;
+      case "mute":
+        var wantMute = (val === true || val === "true" || val === 1);
+        v.muted = wantMute;
+        // Включили звук — отменяем «ждём первого клика». В игре этого клика
+        // не будет никогда: страница в CEF не получает мышиных нажатий,
+        // поэтому флаг оставался взведённым до перезапуска игры, и звук
+        // «включался только после клика в браузере».
+        if (!wantMute) { unmuteOnClick = false; paint(); }
+        break;
       case "normalize":  setNormalize(val === true || val === "true" || val === 1); break;
       case "quality":
         if (DIRECT) {
@@ -404,13 +436,21 @@ SCRIPT = """
       case "trans":      pickTranslation(Number(val)); break;
       case "restart":    v.currentTime = 0; startPlayback(); break;
       case "fullscreen":
-        if (val === true || val === "true" || val === 1) {
+        // Ровно то же, что делает кнопка в самом плеере (`actFull`):
+        // Fullscreen API в CEF игры обычно не работает, поэтому «во весь
+        // экран» — это класс `clean` (убирает панель и курсор) плюс показ
+        // панели, чтобы человек видел, что нажатие сработало.
+        var wantFull = (val === true || val === "true" || val === 1);
+        if (wantFull) {
           if (document.documentElement.requestFullscreen) {
             document.documentElement.requestFullscreen().catch(function () {});
           }
-        } else if (document.exitFullscreen) {
-          document.exitFullscreen().catch(function () {});
+          document.body.classList.add("clean");
+        } else {
+          if (document.exitFullscreen) document.exitFullscreen().catch(function () {});
+          document.body.classList.remove("clean");
         }
+        showUI();
         break;
     }
     report();
@@ -546,6 +586,10 @@ SCRIPT = """
     muteBtn.innerHTML = (v.muted || v.volume === 0) ? ICONS.mute : ICONS.vol;
     if (!dragging) volInput.value = String(Math.round((v.muted ? 0 : v.volume) * 100));
   }
+
+  // Стартовая громкость — из константы, а не из «браузер поставил 100 %».
+  // Проверка `muted` не сбрасывается: если сервер прислал mute, он главнее.
+  v.volume = Math.max(0, Math.min(1, Number(__START_VOL__) || 0.2));
 
   setInterval(paint, 250);
   v.addEventListener("timeupdate", paint);
@@ -744,6 +788,8 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
         .replace("__LEVELS__", levels_json(session))
         .replace("__BACK__", str(SKIP_BACK_S))
         .replace("__FWD__", str(SKIP_FWD_S))
+        .replace("__START_VOL__", f"{START_VOLUME:.2f}")
+        .replace("__START_VOL_PCT__", str(round(START_VOLUME * 100)))
     )
     styles = BASE_CSS.replace("</", "<\\/")  # безопасность: не закрыть тег внутри
     markup = f"""<!doctype html>
@@ -784,7 +830,8 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
       <div id="volwrap">
         <button class="btn" id="b-mute" data-act="mute" type="button"
                 aria-label="Выключить звук">@VOL@</button>
-        <input id="vol" type="range" min="0" max="100" value="100" aria-label="Громкость">
+        <input id="vol" type="range" min="0" max="100"
+               value="__START_VOL_PCT__" aria-label="Громкость">
       </div>
       <button class="btn" id="b-full" data-act="full" type="button"
               aria-label="На весь экран">@FULL@</button>
@@ -801,6 +848,7 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
     # по SCRIPT, и плеер читал строку "__LEVELS__" как JSON: «is not valid
     # JSON», видео не стартовало вовсе.
     markup = markup.replace("__LEVELS__", levels_json(session))
+    markup = markup.replace("__START_VOL_PCT__", str(round(START_VOLUME * 100)))
     # Иконки подставляются отдельным проходом, а не в f-строке: внутри SVG
     # есть фигурные скобки от стилей, и f-строка на них ломается. Один
     # проход по словарю читается лучше, чем цепочка .replace().

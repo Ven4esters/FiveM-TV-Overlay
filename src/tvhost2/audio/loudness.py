@@ -189,7 +189,17 @@ def measure(url: str, ffmpeg_exe: str, headers: dict[str, str] | None = None) ->
     stderr = proc.stderr
     lufs = _EBUR_URL.findall(stderr)
     if not lufs:
-        log.info("громкость: ffmpeg не отдал LUFS (%s)", stderr.strip()[-120:])
+        # Причина «не удался» должна быть видна в журнале ЦЕЛИКОМ, а не
+        # хвостом в 120 символов: у VK первая строка stderr — как раз
+        # причина (истёкшая ссылка / 403 / нет аудио в потоке), а хвост
+        # занимает сводка кодирования. Отсюда «Замер не удался» без
+        # причины в жалобе.
+        head = stderr.strip().splitlines()[:4]
+        log.info(
+            "громкость: ffmpeg не отдал LUFS (код %s): %s",
+            proc.returncode,
+            " | ".join(line.strip() for line in head)[:400] or "stderr пуст",
+        )
         return None
     lra = _EBUR_LRA.findall(stderr)
     peak = _EBUR_PEAK.findall(stderr)

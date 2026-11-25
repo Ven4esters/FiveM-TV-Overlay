@@ -802,11 +802,20 @@ class Panel(QWidget):
         self._open()
 
     def _fill_translations(self, data: dict) -> None:
-        titles = data.get("translations") or []
-        self.translation_box.blockSignals(True)
-        self.translation_box.clear()
-        self.translation_box.addItems([str(t) for t in titles])
-        self.translation_box.blockSignals(False)
+        """Нарисовать список озвучек — и НЕ трогать, если он не изменился.
+
+        Вызывается и при открытии, и из опроса состояния каждые 800 мс.
+        Пересоздание элементов на каждом опросе мигало бы выпадающим списком
+        и, что хуже, сбрасывало бы выбор в момент, когда человек как раз его
+        меняет.
+        """
+        titles = [str(t) for t in (data.get("translations") or [])]
+        current = [self.translation_box.itemText(i) for i in range(self.translation_box.count())]
+        if titles != current:
+            self.translation_box.blockSignals(True)
+            self.translation_box.clear()
+            self.translation_box.addItems(titles)
+            self.translation_box.blockSignals(False)
         # больше одной озвучки — показываем выбор, иначе прячем: дублей не надо
         self.translation_box.setVisible(len(titles) > 1)
 
@@ -1013,21 +1022,89 @@ class Panel(QWidget):
             self._on_error(str(state["error"]))
             return
         self._fill_qualities([str(q) for q in state.get("qualities") or []])
-        # Субтитры: список приходит из /state. Пока он не пришёл, кнопка
-        # молча ничего не делает — поэтому обновляем его здесь же.
-        self._subtitle_titles = [str(t) for t in state.get("subtitles") or []]
+        # Всё, что ниже, вынесено в отдельные методы: `_apply_state` вызывается
+        # 800 раз за 10 минут, и когда она была одной простынёй из 18 веток,
+        # одна упавшая строка убивала всё остальное. Методы проверяются
+        # отдельно (см. tests/v2/test_complaints_216.py).
+        self._apply_subtitles(state.get("subtitles"))
         # Серии тоже приходят в /state: после переключения номера список
         # должен стоять на новой серии, иначе выбор «отскакивает».
         if state.get("episodes") or "canSwitchEpisode" in state:
             self._fill_episodes(state)
+        self._apply_translation_choice(state)
         if self.subs_index > len(self._subtitle_titles):
             self.subs_index = 0
+        self._apply_volume(state)
+        if "muted" in state:
+            self._muted = bool(state.get("muted"))
+            self._paint_mute()
         playing = bool(state.get("playing"))
         self._set_remote_status(
             f"Пульт: {'играет' if playing else 'пауза'}  {_mmss(position)} / {_mmss(duration)}"
         )
         self.btn_play.setIcon(theme.icon("pause" if playing else "play", 22))
-        self.btn_mute.setIcon(theme.icon("muted" if state.get("muted") else "volume", 20))
+        # Иконку звука уже поставил `_paint_mute()` выше — второй раз не надо:
+        # он же выставляет подсветку кнопки, а прямое `setIcon` её не трогает.
+
+    def _apply_subtitles(self, subs_raw: object) -> None:
+        """Список дорожек субтитров — из /state, но там ДВА разных смысла.
+
+        `session.state()` отдаёт список названий, а `player.report()` —
+        ЧИСЛО дорожек (`v.textTracks.length`), потому что так их видит
+        страница в игре; второй перезаписывает первый в обработчике
+        `/state`. Раньше int ронял строку с `TypeError` каждые 800 мс, и всё
+        ниже (серии, озвучки, иконка звука, ползунок) не применялось вовсе —
+        отсюда сразу пять жалоб из восьми.
+        """
+        if isinstance(subs_raw, (list, tuple)):
+            self._subtitle_titles = [str(t) for t in subs_raw]
+        elif isinstance(subs_raw, int) and not isinstance(subs_raw, bool):
+            # Только число, без названий: названия уже известны, если
+            # приходили раньше. Меньше — значит дорожек стало меньше.
+            if subs_raw == 0:
+                self._subtitle_titles.clear()
+            else:
+                while len(self._subtitle_titles) > subs_raw:
+                    self._subtitle_titles.pop()
+
+    def _apply_translation_choice(self, state: dict) -> None:
+        """Показать в списке ту озвучку, которая играет НА САМОМ ДЕЛЕ.
+
+        У Kodik каждая озвучка — отдельный поток, поэтому после смены
+        серии приходит свой набор названий. Если не обновить список и не
+        выставить выбранную строку, получается жалоба «выбор не действует,
+        играет другая».
+        """
+        if "translations" in state:
+            self._fill_translations(state)
+        chosen = state.get("translationIndex")
+        if not isinstance(chosen, int) or isinstance(chosen, bool):
+            return
+        if not (0 <= chosen < self.translation_box.count()):
+            return
+        if self.translation_box.currentIndex() == chosen:
+            return
+        self.translation_box.blockSignals(True)
+        self.translation_box.setCurrentIndex(chosen)
+        self.translation_box.blockSignals(False)
+
+    def _apply_volume(self, state: dict) -> None:
+        """Ползунок пульта повторяет громкость из браузера/игры.
+
+        Без этого человек крутит колесо мыши в игре, а пульт показывает
+        старое положение — и при следующем касании возвращает громкость.
+        `isSliderDown` важен: пока тянут сам ползунок, его нельзя дёргать
+        из-под пальца.
+        """
+        vol = state.get("volume")
+        if not isinstance(vol, (int, float)) or isinstance(vol, bool):
+            return
+        percent = max(0, min(100, round(float(vol) * 100)))
+        if self.volume.isSliderDown() or self.volume.value() == percent:
+            return
+        self.volume.blockSignals(True)
+        self.volume.setValue(percent)
+        self.volume.blockSignals(False)
 
     def _on_error(self, message: str, hint: str = "") -> None:
         """Показать отказ так, чтобы его нельзя было не заметить.
@@ -1251,6 +1328,8 @@ class Panel(QWidget):
         исправной кнопкой.
         """
         self._muted = not self._muted
+        # Одна команда, и она трогает только `v.muted`. Ни play(), ни pause():
+        # жалоба была «нажал Звук — видео встало».
         self._cmd("mute", self._muted)
         self._paint_mute()
         self._set_remote_status("Звук выключен" if self._muted else "Звук включён")
