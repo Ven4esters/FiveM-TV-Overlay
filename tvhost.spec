@@ -64,8 +64,14 @@ excluded = [
     "PIL",
 ]
 
+# Точка входа — скрипт-обёртка в корне src/, а НЕ ui/__main__.py напрямую.
+# PyInstaller исполняет указанный файл как модуль верхнего уровня, вне пакета,
+# и относительные импорты внутри ui/__main__.py (`from . import theme`,
+# `from ..core import resources`) падают в собранном .exe с ImportError:
+# attempted relative import with no known parent package. В исходниках ошибки
+# не видно, потому что там запуск идёт как `python -m tvhost2.ui`.
 a = Analysis(
-    [str(PKG / "ui" / "__main__.py")],
+    [str(SRC / "tvhost2_entry.py")],
     pathex=[str(SRC)],
     binaries=[],
     datas=datas,

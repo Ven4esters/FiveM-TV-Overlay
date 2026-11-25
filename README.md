@@ -219,6 +219,7 @@ build.bat
 | `FiveM-Video-Overlay.exe` | сама программа; двойной клик поднимает пульт и сервер |
 | `FiveM-Video-Overlay.exe.md5` | контрольная сумма MD5 |
 | `FiveM-Video-Overlay.exe.sha256` | контрольная сумма SHA-256 |
+| `FiveM-Video-Overlay.exe.txt` | **данные для раздела «Проверка файла»**: версия, размер, дата, оба хеша и готовые команды проверки. Копируется в README как есть |
 
 **Требования к сборке:** Python 3.10+ (64-бит) из python.org с галочкой
 «Add python.exe to PATH»; `start.bat` для сборки не нужен. 64-битная система,

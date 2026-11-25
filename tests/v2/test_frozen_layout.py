@@ -97,6 +97,24 @@ class TestBuildSpec:
         for needed in ("hls.min.js", "style.qss", "icons", "app.ico"):
             assert needed in text, f"{needed} не попадает в сборку"
 
+    def test_entry_point_uses_absolute_import(self) -> None:
+        """PyInstaller исполняет точку входа как модуль ВНЕ пакета.
+
+        Если в spec указать `ui/__main__.py` напрямую, относительные импорты
+        внутри него падают в .exe с ImportError: attempted relative import
+        with no known parent package. Проверено на реальной сборке.
+        """
+        root = Path(__file__).resolve().parents[2]
+        spec = (root / "tvhost.spec").read_text(encoding="utf-8")
+        assert "tvhost2_entry.py" in spec, "spec должен указывать на обёртку"
+        assert 'PKG / "ui" / "__main__.py"' not in spec, "нельзя указывать ui/__main__.py напрямую"
+
+        entry = (root / "src" / "tvhost2_entry.py").read_text(encoding="utf-8")
+        assert "from tvhost2.ui.__main__ import main" in entry, "нужен абсолютный импорт"
+        assert not any(
+            line.startswith("from .") or line.startswith("from ..") for line in entry.splitlines()
+        ), "в точке входа не должно быть относительных импортов"
+
     def test_spec_sets_exe_icon(self) -> None:
         """Без icon= у .exe пустой значок Windows, и заметить это можно
         только после сборки — то есть через десять минут."""

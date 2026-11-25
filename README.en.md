@@ -223,6 +223,7 @@ either can be deleted without breaking the other. The folder is in `.gitignore`.
 | `FiveM-Video-Overlay.exe` | the program itself; a double click starts the panel and the server |
 | `FiveM-Video-Overlay.exe.md5` | MD5 checksum |
 | `FiveM-Video-Overlay.exe.sha256` | SHA-256 checksum |
+| `FiveM-Video-Overlay.exe.txt` | **data for the "Verifying the file" section**: version, size, date, both hashes and ready-to-run check commands. Paste into the README as is |
 
 **Build requirements:** Python 3.10+ (64-bit) from python.org with "Add
 python.exe to PATH"; `start.bat` is not needed for the build. A 64-bit system and

@@ -10,6 +10,73 @@
 
 ---
 
+# .exe падал на относительном импорте — 25.11.2026
+
+Заказчик собрал .exe и получил при запуске:
+
+```
+Unhandled exception in script
+Failed to execute script '__main__' due to unhandled exception:
+attempted relative import with no known parent package
+File "__main__.py", line 26, in <module>
+ImportError: attempted relative import with no known parent package
+```
+
+## Причина
+
+`tvhost.spec` указывал точкой входа файл `src/tvhost2/ui/__main__.py`. PyInstaller
+исполняет указанный скрипт как **модуль верхнего уровня, вне пакета**. А внутри
+этого файла стоят относительные импорты:
+
+```python
+from ..core import resources   # строка 26 — та самая
+from . import theme
+from .api import Api
+from .panel import Panel
+```
+
+Относительному импорту нужен известный родительский пакет (`tvhost2.ui`), а при
+запуске «как скрипт» его нет. В исходниках ошибки не видно, потому что там файл
+запускают как `python -m tvhost2.ui` — тогда пакет известен.
+
+Ошибка воспроизведена в изоляции: та же структура пакета, тот же запуск «как
+скрипт» — тот же `ImportError` на первой же относительной строке.
+
+## Решение
+
+Создан `src/tvhost2_entry.py` — тонкая обёртка с **абсолютным** импортом:
+
+```python
+from tvhost2.ui.__main__ import main as panel_main
+```
+
+Пакет при этом загружается целиком, и все относительные импорты внутри него
+работают как обычно. `tvhost.spec` переведён на эту обёртку.
+
+Поведение .exe не изменилось: запускается тот же `main()`, что и у
+`python -m tvhost2.ui`, то есть `--serve` по умолчанию включён (в сборке
+`resources.FROZEN` истинно).
+
+## Тест
+
+`test_entry_point_uses_absolute_import` проверяет три вещи: в spec указана
+обёртка, прямой `ui/__main__.py` не указан, и в самой обёртке нет ни одного
+относительного импорта. Без него эта ошибка вернулась бы при первой же правке
+spec.
+
+## Отчёт для README
+
+`build.bat` теперь пишет рядом с .exe файл **`FiveM-Video-Overlay.exe.txt`**:
+версия (из `pyproject.toml`, а не вписанная руками), размер в байтах и МБ, дата
+сборки, MD5, SHA-256, готовые команды проверки для PowerShell / cmd / Linux и
+список файлов на выходе. Данные копируются в README, раздел «Проверка файла»,
+как есть — вручную ничего сверять не нужно.
+
+Скрипт заодно приведён к виду образца заказчика: короткие шаги `[1/7]`,
+`goto :venv_ready`, метки `:built`-стиля (`:failed`), `pause` на обоих путях.
+
+---
+
 # build.bat не запускался — 25.11.2026
 
 Заказчик прислал скриншот: PowerShell пишет «Имя build.bat не распознано как
