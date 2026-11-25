@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import urllib.request
 
 import pytest
 
@@ -160,7 +161,6 @@ def test_serve_mode_stops_server_on_exit() -> None:
     assert running.worker.is_alive(), "поток сервера не запустился"
 
     # Сервер реально отвечает, пока работает
-    import urllib.request
 
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as response:  # noqa: S310
         assert response.status == 200
@@ -254,3 +254,125 @@ def test_window_size_is_bounded(app: object) -> None:
     panel = Panel()
     assert panel.minimumWidth() >= 500
     assert panel.maximumHeight() <= 1000
+
+
+# ---------------------------------------------------------------------------
+#                    «прокси: выключен» и пустые источники
+# ---------------------------------------------------------------------------
+
+
+def test_local_api_works_when_system_proxy_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Запрос к своему прокси не идёт через системный прокси.
+
+    Жалоба: в собранном .exe в шапке «прокси: выключен», вкладка «Источники»
+    пустая — при том, что прокси жив и отвечает.
+
+    Причина: `urllib.urlopen` уважает `HTTP_PROXY` и системные настройки
+    Windows. Запрос к 127.0.0.1 уходил НА ВНЕШНИЙ прокси, который localhost
+    не обслуживает, и через 3 секунды таймаута пульт решал, что прокси мёртв.
+
+    Тест поведенческий: поднимаем настоящий сервер, ставим заведомо мёртвый
+    `http_proxy` и требуем, чтобы клиент пульта всё равно ответил.
+    """
+    import http.server
+    import threading
+
+    from tvhost2.ui.api import Api
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 — имя задаёт http.server
+            body = b'{"app": "FiveM Video Overlay", "version": "2.1.0"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    # Мёртвый прокси: любой запрос через него повиснет и упрётся в таймаут.
+    monkeypatch.setenv("http_proxy", "http://10.255.255.1:3128")
+    monkeypatch.setenv("HTTP_PROXY", "http://10.255.255.1:3128")
+    try:
+        assert Api(base=f"http://127.0.0.1:{port}", timeout=3).alive() is True, (
+            "клиент пульта ушёл в системный прокси и не достучался до localhost"
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_local_api_uses_local_opener() -> None:
+    """Клиент пульта ходит через LOCAL_OPENER, а не сырым urlopen.
+
+    Сырой `urlopen` — это ровно та дверь, через которую системный прокси
+    перехватывает localhost. Держим её закрытой.
+    """
+    from pathlib import Path as _Path
+
+    source = _Path("src/tvhost2/ui/api.py").read_text(encoding="utf-8")
+    assert "LOCAL_OPENER.open(" in source
+    assert "urllib.request.urlopen(" not in source, (
+        "в api.py остался сырой urlopen — он уважает системный прокси"
+    )
+
+
+def test_panel_checks_proxy_on_startup(app: object) -> None:
+    """Окно само проверяет прокси при старте, а не ждёт нажатия кнопки.
+
+    Жалоба: «в .exe прокси: выключен и источники не отображаются». Пока
+    `_check_proxy` висел только на кнопке «обновить», в шапке до первого
+    нажатия светилось «прокси: проверяю…», а таблица источников была пуста.
+    """
+    from pathlib import Path as _Path
+
+    from tvhost2.ui.panel import STARTUP_PROXY_CHECK_MS
+
+    source = _Path("src/tvhost2/ui/panel.py").read_text(encoding="utf-8")
+    init_body = source.split("def __init__", 1)[1].split("def _build", 1)[0]
+    assert "singleShot" in init_body and "_check_proxy" in init_body, (
+        "в __init__ нет отложенной проверки прокси — шапка останется «проверяю…»"
+    )
+    assert STARTUP_PROXY_CHECK_MS > 0, "нулевая задержка даёт гонку с --serve"
+
+
+def test_sources_load_even_when_health_check_fails(app: object) -> None:
+    """Список источников грузится даже при неудачной проверке живости.
+
+    Раньше `_load_sources` стоял ВНУТРИ ветки `alive() == True`. Один
+    неудачный health-check — и «Источники» пусты навсегда, хотя прокси мог
+    ответить уже через секунду.
+    """
+    import time as _time
+
+    from tvhost2.ui.panel import Panel
+
+    calls: list[str] = []
+
+    class FakeApi:
+        def alive(self) -> bool:
+            return False
+
+        def sources(self) -> list[dict]:
+            calls.append("sources")
+            return [{"name": "Rutube", "state": "ok", "note": ""}]
+
+        def journal(self, limit: int = 300) -> str:
+            calls.append("journal")
+            return ""
+
+        def history(self) -> list[dict]:
+            return []
+
+    panel = Panel(api=FakeApi())  # type: ignore[arg-type]
+    panel._check_proxy()
+    for _ in range(100):
+        if "journal" in calls:
+            break
+        _time.sleep(0.02)
+    assert "sources" in calls, "источники не запросились при выключенной проверке"
+    assert panel.badge.text() == "прокси: выключен"

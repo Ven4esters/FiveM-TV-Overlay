@@ -118,6 +118,13 @@ class Panel(QWidget):
         self._connect()
         self._restore_tab()
         self._load_history()
+        # Проверить прокси при старте. Раньше `_check_proxy` висел ТОЛЬКО на
+        # кнопке «обновить», и до первого нажатия в шапке светилось исходное
+        # «прокси: проверяю…», а вкладка «Источники» оставалась пустой —
+        # выглядело как «функции не работают», хотя прокси жив.
+        # Задержка нужна из-за режима --serve: сервер поднимается в этом же
+        # процессе, и окно успевает построиться раньше первого ответа.
+        QTimer.singleShot(STARTUP_PROXY_CHECK_MS, self._check_proxy)
         # QSS ставится на ПРИЛОЖЕНИЕ, а не на это окно: стиль на конкретном
         # виджете конфликтует с application-стилем, и Qt молча применяет
         # только часть правил (кнопка #primary оставалась системной серой).
@@ -1042,13 +1049,18 @@ class Panel(QWidget):
                 self.badge.setProperty("state", "ok")
                 self.badge.style().unpolish(self.badge)
                 self.badge.style().polish(self.badge)
-                self._load_sources(force=True)
-                self._load_journal()
             else:
                 self.badge.setText("прокси: выключен")
                 self.badge.setProperty("state", "error")
                 self.badge.style().unpolish(self.badge)
                 self.badge.style().polish(self.badge)
+            # Источники и журнал грузим В ЛЮБОМ СЛУЧАЕ. Раньше они висели
+            # внутри ветки «alive() == True»: одна неудачная проверка — и
+            # вкладка «Источники» оставалась пустой навсегда, хотя прокси мог
+            # ответить уже через секунду. Список источников — статический, он
+            # не зависит от того, ответил ли health-check прямо сейчас.
+            self._load_sources(force=True)
+            self._load_journal()
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1178,6 +1190,13 @@ class Panel(QWidget):
 SHORT_LIST = 5
 """Сколько имён влезает в подпись под полем ссылки, прежде чем она начнёт
 переноситься на вторую строку и толкать поле ввода вниз."""
+
+STARTUP_PROXY_CHECK_MS = 400
+"""Через сколько миллисекунд после постройки окна проверить прокси.
+
+Не ноль: в режиме --serve сервер стартует в этом же процессе, и мгновенная
+проверка успевает случиться раньше, чем он начнёт принимать соединения.
+Полсекунды незаметны глазу и убирают эту гонку."""
 
 
 def _supported_preview() -> str:

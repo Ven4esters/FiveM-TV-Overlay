@@ -44,6 +44,23 @@ class ApiError(Exception):
     """Прокси не ответил совсем (не запущен, порт занят, таймаут)."""
 
 
+LOCAL_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+"""Ходим к СВОЕМУ прокси мимо системного.
+
+Зачем: `urllib` по умолчанию уважает `HTTP_PROXY`/`http_proxy` и системные
+настройки Windows. Если у человека включён прокси (VPN-клиент, корпоративная
+сеть, «ускоритель»), запрос к 127.0.0.1 уходит НА ВНЕШНИЙ ПРОКСИ, а тот,
+естественно, localhost не обслуживает. Пульт получает таймаут и пишет
+«прокси: выключен», хотя прокси жив и отвечает.
+
+Проверено экспериментом: с `http_proxy=http://10.255.255.1:3128` обычный
+`urlopen` к 127.0.0.1 падал по таймауту за 3 с, а этот opener — отвечал 200.
+
+Важно: только для ЛОКАЛЬНОГО адреса пульта. Запросы к источникам
+(`web/fetch.py`) идут как раньше — системный прокси там может быть нужен,
+чтобы открывать сайты, закрытые по региону."""
+
+
 class Api:
     """Клиент прокси. Один экземпляр на окно."""
 
@@ -70,7 +87,7 @@ class Api:
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
+            with LOCAL_OPENER.open(request, timeout=timeout or self.timeout) as response:
                 raw = response.read()
                 return ApiResult(ok=True, status=response.status, data=_json_or_none(raw))
         except urllib.error.HTTPError as exc:
