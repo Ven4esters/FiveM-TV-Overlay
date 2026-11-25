@@ -7,11 +7,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from PySide6.QtGui import QIcon
 
-ASSETS = Path(__file__).parent / "assets"
+from ..core import resources
+
+ASSETS = resources.resource("ui", "assets")
+"""Иконки и style.qss. В .exe — распакованная копия (resources.py)."""
 ICONS = ASSETS / "icons"
 QSS = ASSETS / "style.qss"
 

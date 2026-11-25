@@ -23,6 +23,7 @@ from http.server import ThreadingHTTPServer
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
+from ..core import resources
 from . import theme
 from .api import Api
 from .panel import Panel
@@ -63,8 +64,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--host", default="127.0.0.1", help="адрес прокси, к которому подключаться")
     parser.add_argument(
         "--serve",
-        action="store_true",
-        help="поднять прокси в этом же процессе (одна команда вместо двух)",
+        action=argparse.BooleanOptionalAction,
+        default=resources.FROZEN,
+        help=(
+            "поднять сервер в этом же процессе (одна команда вместо двух). "
+            "В собранном .exe включено по умолчанию: двойной клик не передаёт "
+            "аргументов, а пульт без сервера бесполезен"
+        ),
     )
     parser.add_argument("--listen", default="0.0.0.0", help="адрес прослушивания для --serve")
     args = parser.parse_args(argv)

@@ -37,6 +37,8 @@
 - [Screenshots](#screenshots)
 - [Requirements](#requirements)
 - [Quick start](#quick-start)
+- [Building the .exe](#building-the-exe)
+- [Verifying the file](#verifying-the-file)
 - [Usage](#usage)
 - [HTTP API](#http-api)
 - [Architecture](#architecture)
@@ -74,6 +76,8 @@ are downloaded, and every stream is requested fresh each time.
   the video at the same minute.
 - **A PySide6 control panel** plus the same page in a phone browser, so you can
   drive it from wherever is convenient.
+- **A single .exe build**: `build.bat` produces a standalone file that needs
+  no installed Python and writes `.md5` and `.sha256` checksums next to it.
 - **A memory benchmark in the box**: `tools/bench_memory.py --quick` reports RSS
   per stage; the server takes **40 MB** at startup and **44 MB** under load.
 - **A refusal instead of silence**: when a site is unsupported, the panel names
@@ -181,6 +185,138 @@ which the game client needs).
 
 </details>
 
+## Building the .exe
+
+`build.bat` builds a standalone `FiveM-Video-Overlay.exe`: no Python and no
+dependency install needed on the user's machine — download and run.
+
+```bat
+build.bat
+```
+
+The script does everything: checks Python and its bitness, installs dependencies
+and PyInstaller, cleans the previous build, builds the .exe and computes the
+checksums. A build takes **3–10 minutes**, most of it the first PyInstaller run.
+
+**Result** in the `dist/` folder:
+
+| File | Purpose |
+|---|---|
+| `FiveM-Video-Overlay.exe` | the program itself; a double click starts the panel and the server |
+| `FiveM-Video-Overlay.exe.md5` | MD5 checksum |
+| `FiveM-Video-Overlay.exe.sha256` | SHA-256 checksum |
+
+**Build requirements:** Python 3.10+ (ideally the same `.venv` `start.bat`
+creates), a 64-bit system, about 1 GB of free space during the build. Windows is
+the only supported platform for the `.exe`.
+
+<details>
+<summary>What is inside the build and why</summary>
+
+- The configuration lives in `tvhost.spec` rather than in a dozen command-line
+  flags: the project has three data sets (the player page with `hls.min.js`, the
+  `style.qss` stylesheet, the icon folder), and flags are easy to lose.
+- The build is **onefile**: a single file that unpacks into a temporary folder on
+  start. Everything the program must remember between runs is therefore written
+  next to the `.exe`, not into the unpack folder — the split lives in
+  `src/tvhost2/core/resources.py`.
+- UPX is off: it saves ~20 MB but breaks Qt, and the resulting crashes get
+  searched for in the code.
+- Unused Qt modules (WebEngine, Multimedia, Quick) are excluded: without that the
+  build weighs hundreds of megabytes instead of tens.
+- `ffmpeg` is not embedded. It comes from `imageio-ffmpeg` or from `ffmpeg.exe`
+  next to the program — drop one there if you need loudness levelling.
+
+</details>
+
+## Verifying the file
+
+The `.exe` ships with two checksums. They answer two different questions: **did
+the file download in full** (MD5 and SHA-256) and **was it tampered with**
+(SHA-256 only — MD5 has not been good enough for that for a long time).
+
+> [!WARNING]
+> Compare against the checksum published here or in the release notes. A checksum
+> sitting next to the file on a third-party site proves nothing: it gets replaced
+> together with the file.
+
+### Checksums
+
+<!-- TODO(exe): fill in after the first build.bat run.
+     Order: build the .exe, then paste the values from
+     dist\FiveM-Video-Overlay.exe.md5 and .sha256 plus the version name. -->
+
+| Item | Value |
+|---|---|
+| Version | `TODO` — filled after the build |
+| File size | `TODO` — filled after the build |
+| Build date | `TODO` — filled after the build |
+| **MD5** | `TODO` — filled after the build |
+| **SHA-256** | `TODO` — filled after the build |
+
+### How to check it yourself
+
+**Windows, PowerShell:**
+
+```powershell
+Get-FileHash .\FiveM-Video-Overlay.exe -Algorithm SHA256
+Get-FileHash .\FiveM-Video-Overlay.exe -Algorithm MD5
+```
+
+Compare the strings with the table above: they must match character for character.
+
+**Windows, command prompt:**
+
+```bat
+certutil -hashfile FiveM-Video-Overlay.exe SHA256
+```
+
+**Linux or macOS:**
+
+```bash
+sha256sum -c FiveM-Video-Overlay.exe.sha256
+md5sum -c FiveM-Video-Overlay.exe.md5
+```
+
+The expected output is `FiveM-Video-Overlay.exe: OK`. Anything else means the file
+downloaded incompletely or was modified: do not run it, download it again.
+
+### VirusTotal check
+
+<!-- TODO(virustotal): fill in after the first build.bat run.
+     Order:
+       1. Build the .exe.
+       2. Upload dist\FiveM-Video-Overlay.exe to https://www.virustotal.com
+          (File tab; you may keep the upload private, but then the report link
+          is useless to readers — publish it).
+       3. Paste the report link and the check date into the table below.
+       4. State how many engines flagged it: an empty cell is more honest than
+          an invented "0/70". -->
+
+| Item | Value |
+|---|---|
+| VirusTotal report link | `TODO` — after the first build |
+| Check date | `TODO` |
+| Result | `TODO` — e.g. `0/72`, or the list of engines that flagged it |
+
+<details>
+<summary>Why an unsigned .exe sometimes shows "1–3 detections"</summary>
+
+A PyInstaller build has no code signature and carries Python and Qt packed inside.
+Some antivirus engines react to that heuristics and report something like
+"Trojan.Generic" or "Wacatac" — a false positive, not a virus. How to tell: a real
+detection is flagged by **several well-known vendors** and comes with a behavioural
+report; a heuristic is one or two obscure names.
+
+Two more ways to settle it:
+
+- **Build it yourself** from this repository: `build.bat` produces a file from
+  sources you can read. The checksum will differ — builds are not byte-for-byte
+  reproducible, and that is normal.
+- **Run from source** without an `.exe` at all: see "Quick start".
+
+</details>
+
 ## Usage
 
 ### Open a video on the TV
@@ -281,7 +417,7 @@ Design notes live in `README_OVERLAY.md` (Russian); layer rules are in
 ## Tests
 
 ```bash
-python -m pytest                                  # 478 tests
+python -m pytest                                  # 488 tests
 python -m pytest -m "not browser and not network" # fast run without live sites
 ruff check src tests tools                        # linter
 mypy src                                          # types

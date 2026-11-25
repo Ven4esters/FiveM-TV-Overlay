@@ -14,14 +14,21 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+from .resources import app_dir
+
 _CACHE: dict[str, str | None] = {}
 
 _BUNDLED_NAMES = ("ffmpeg.exe", "ffmpeg")
 
 
 def _project_root() -> Path:
-    """Корень проекта: src/tvhost2/core → три уровня вверх."""
-    return Path(__file__).resolve().parents[3]
+    """Папка приложения: рядом с ним кладут ffmpeg.exe.
+
+    В исходниках это корень проекта, в собранном .exe — папка самого файла.
+    Без этой разницы собранная программа искала бы ffmpeg во временной
+    папке распаковки, где его никогда нет.
+    """
+    return app_dir()
 
 
 def find_ffmpeg() -> str | None:

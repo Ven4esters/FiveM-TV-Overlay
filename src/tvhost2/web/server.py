@@ -37,7 +37,7 @@ from typing import Any
 from .. import __version__
 from ..audio import loudness
 from ..core import diagnostics as diag
-from ..core import registry
+from ..core import registry, resources
 from ..sources import register_all
 from . import hls as hls_bridge
 from . import player as player_page
@@ -48,7 +48,8 @@ from .session import SessionStore
 
 log = logging.getLogger(__name__)
 
-STATIC_DIR = Path(__file__).parent / "static"
+STATIC_DIR = resources.resource("web", "static")
+"""Страница плеера и hls.min.js. В .exe — распакованная копия (resources.py)."""
 HLS_JS_NAME = "hls.min.js"
 MAX_COMMANDS = 200
 """Предел очереди команд: если плеер не отвечает час, очередь не растёт."""
