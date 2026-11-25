@@ -488,9 +488,19 @@ mark: a trimmed link will not open.
 <details>
 <summary>Port 9001 is taken</summary>
 
-Start on another port: `tvhost --port 9002` or
-`python -m tvhost2.ui --serve --port 9002`. The panel connects to the same port
-the server listens on.
+Since 2.1.1 the panel no longer dies silently: the window opens and the
+status line reads `port 9001 is busy — proxy not started in this window`.
+
+What to check:
+
+1. **A second instance is already running.** Open `http://127.0.0.1:9001/`
+   in a browser. If you see `{"app": "FiveM Video Overlay"}`, the proxy is
+   alive — close the extra window.
+2. **Another program holds the port.** Start on another port:
+   `FiveM-Video-Overlay.exe --port 9002`. The panel connects to the same port
+   the server listens on, so the in-game link moves to 9002 as well.
+3. **Older versions (before 2.1.1)** simply vanished in this situation — the
+   `console=False` build has nowhere to print a traceback. Update.
 </details>
 
 <details>

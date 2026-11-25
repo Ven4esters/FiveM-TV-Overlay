@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 import threading
 from dataclasses import dataclass
@@ -27,6 +28,8 @@ from ..core import resources
 from . import theme
 from .api import Api
 from .panel import Panel
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -85,10 +88,21 @@ def main(argv: list[str] | None = None) -> int:
 
     running: _RunningServer | None = None
     if args.serve:
-        running = _start_server(args.listen, args.port)
+        try:
+            running = _start_server(args.listen, args.port)
+        except OSError as exc:
+            # Порт занят: чаще всего запущен второй экземпляр .exe, либо
+            # порт держит другая программа. В `console=False` трейсбек некуда
+            # печатать — процесс просто исчезал бы, и человек решил бы, что
+            # «программа не запускается». Поэтому окно всё равно открываем:
+            # если на порту уже живёт НАШ прокси, пульт к нему подключится
+            # и покажет «прокси: работает».
+            log.error("прокси не поднялся на порту %s: %s", args.port, exc)
 
     panel = Panel(api=Api(base=f"http://127.0.0.1:{args.port}"))
     panel.show()
+    if args.serve and running is None:
+        panel.set_remote_status(f"порт {args.port} занят — прокси не запущен в этом окне")
     try:
         return app.exec()
     finally:
