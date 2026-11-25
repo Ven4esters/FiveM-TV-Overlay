@@ -39,6 +39,13 @@ log = logging.getLogger(__name__)
 
 _ID_RE = re.compile(r"(?:ok\.ru|odnoklassniki\.ru)/(?:video|web_video)/(\d+)", re.IGNORECASE)
 
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+)
+"""Отпечаток клиента для okcdn. Проверено: без него подпись не принимается."""
+
+
 
 class OkRuSource(YtDlpSource):
     name = "OK.ru"
@@ -163,6 +170,16 @@ class OkRuSource(YtDlpSource):
             duration_s=int(info.get("duration") or 0),
             is_live=False,
             state=self.state,
+            # Подпись okcdn (`sig=`) привязана к отпечатку клиента, и без
+            # заголовка User-Agent CDN отвечает `400` с телом-кодом `10`.
+            # Проверено живьём: тот же адрес с любым UA (`Mozilla/5.0`
+            # достаточно) отдаёт `200` и плейлист, без UA — `400`.
+            # Раньше здесь заголовков не было вовсе, и видео не играло,
+            # хотя сессия создавалась успешно.
+            headers={
+                "User-Agent": USER_AGENT,
+                "Referer": "https://ok.ru/",
+            },
         )
 
 

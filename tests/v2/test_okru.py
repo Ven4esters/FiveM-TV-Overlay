@@ -179,6 +179,30 @@ class TestResolve:
         assert len(stream.qualities) == 6
         assert not stream.is_live
 
+    def test_stream_carries_user_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Поток обязан нести UA: без него okcdn отвечает 400.
+
+        Проверено живьём 25.11.2026: тот же адрес `manifest_url` с заголовком
+        `User-Agent` отдаёт `200` и плейлист, без заголовка — `400` с телом
+        `10`. Сессия при этом создавалась успешно, поэтому сломанный источник
+        выглядел рабочим до первого сегмента.
+        """
+        monkeypatch.setattr(
+            "tvhost2.sources.okru.extract_info",
+            fake_info(
+                {
+                    "title": "ОКнутые люди",
+                    "duration": 2927,
+                    "formats": [*hls_formats(), *vp9_direct()],
+                }
+            ),
+        )
+        stream = OkRuSource().resolve("https://ok.ru/video/7475662490142")
+        assert stream.headers, "заголовки не переданы — okcdn ответит 400"
+        assert "User-Agent" in stream.headers
+        assert stream.headers["User-Agent"].startswith("Mozilla/5.0")
+        assert stream.headers.get("Referer", "").startswith("https://ok.ru")
+
     def test_live_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Прямые эфиры OK.ru не поддерживаются — говорим прямо."""
         from tvhost2.core.errors import SourceFailedError
