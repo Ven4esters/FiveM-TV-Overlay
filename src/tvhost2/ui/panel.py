@@ -48,7 +48,9 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, __version__
 from ..core import diag_report, diagnostics, registry
+from ..core.diagnostics import log as diag_log
 from ..core.models import episode_index
+from ..core.models import episode_number as episode_index_number
 from ..sources import register_all
 from . import theme
 from .api import Api, ApiError
@@ -96,6 +98,14 @@ class Panel(QWidget):
         self.subs_index = 0
         """Текущая дорожка субтитров: 0 — выключены, N — включена N-я с нуля."""
         self._subtitle_titles: list[str] = []
+        self._episode_busy = False
+        """Идёт смена серии: сервер разбирает новую 2–3 секунды.
+
+        Пока флаг поднят, опрос состояния НЕ трогает список серий. Иначе
+        каждые 800 мс приходил прежний номер, и выбор отскакивал обратно —
+        снаружи это выглядит как «серии не переключаются вовсе»."""
+        self._translation_busy = False
+        """То же для озвучки: смена — повторный разбор, тоже секунды."""
         """Названия дорожек текущего видео — для подсказки при переключении."""
         self._last_err_key = ""
         self._muted = False
@@ -874,9 +884,14 @@ class Panel(QWidget):
         физически нечего. Сервер разбирает ссылку заново, плеер в игре
         перезагружает страницу и играет уже нужную серию.
         """
-        if not self.sid or index < 0:
+        if not self.sid or index < 0 or self._episode_busy:
             return
-        number = index + 1
+        # Номер — из ПОДПИСИ строки, а не «индекс + 1»: у сериалов бывают
+        # дыры в нумерации, и тогда строка 3 — это 4-я серия.
+        title = self.episode_box.itemText(index).strip()
+        number = episode_index_number(title) or (index + 1)
+        self._episode_busy = True
+        diag_log("ui", f"нажата серия: строка {index} → серия {number} ({title!r})")
         self._set_remote_status(f"Пульт: открываю {number}-ю серию…")
 
         def worker() -> None:
@@ -888,7 +903,13 @@ class Panel(QWidget):
             if not result.ok:
                 self.error_text.emit(result.reason, result.hint)
                 return
+            diag_log("ui", f"серия {number} открыта, просим плеер перезагрузиться")
             self.episode_ready.emit()
+            # Опрос сейчас вернёт уже новую серию — тогда список обновится.
+            # Пауза чуть больше периода опроса (800 мс), чтобы не поймать
+            # ответ, отправленный ДО смены.
+            threading.Event().wait(1.2)
+            self._episode_busy = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -920,17 +941,30 @@ class Panel(QWidget):
         self.quality_box.blockSignals(False)
 
     def _cmd(self, cmd: str, value=None) -> None:
+        """Команда плееру. Каждый шаг пишется в журнал.
+
+        Жалоба «кнопка не работает, а журнал молчит»: раньше сюда попадали
+        только отказы, поэтому по журналу нельзя было понять, дошло ли
+        нажатие до сервера. Теперь видна вся цепочка: нажали → отправили →
+        что ответил сервер → применил ли плеер.
+        """
         if not self.sid:
+            diag_log("ui", f"команда {cmd}={value!r} НЕ отправлена: нет сессии")
             return
+        diag_log("cmd", f"→ плееру {cmd}={value!r}")
 
         def worker() -> None:
             try:
                 result = self.api.control(self.sid, cmd, value)
             except ApiError as exc:
+                diag_log("err", f"команда {cmd} не дошла: {exc}")
                 self.error_text.emit(str(exc), "Проверьте, что прокси запущен")
                 return
             if not result.ok:
+                diag_log("err", f"команда {cmd} отклонена: {result.reason}")
                 self.error_text.emit(result.reason, result.hint)
+            else:
+                diag_log("cmd", f"← сервер принял {cmd}")
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -951,6 +985,11 @@ class Panel(QWidget):
         if index < 0 or not self.sid:
             return
 
+        if self._translation_busy:
+            return
+        self._translation_busy = True
+        diag_log("ui", f"нажата озвучка: строка {index} ({self.translation_box.itemText(index)!r})")
+
         def worker() -> None:
             try:
                 result = self.api.translation(self.sid, index)
@@ -961,6 +1000,11 @@ class Panel(QWidget):
                 self.error_text.emit(result.reason, result.hint)
                 return
             self._set_remote_status("Пульт: озвучка сменилась — телевизор перезагрузит страницу")
+            # Плеер перезагрузит страницу сам (команда ниже), но опрос
+            # состояния успел бы вернуть прежний список — держим паузу.
+            self._cmd("reload", 1)
+            threading.Event().wait(1.2)
+            self._translation_busy = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1038,7 +1082,7 @@ class Panel(QWidget):
         self._apply_subtitles(state.get("subtitles"))
         # Серии тоже приходят в /state: после переключения номера список
         # должен стоять на новой серии, иначе выбор «отскакивает».
-        if state.get("episodes") or "canSwitchEpisode" in state:
+        if (state.get("episodes") or "canSwitchEpisode" in state) and not self._episode_busy:
             self._fill_episodes(state)
         self._apply_translation_choice(state)
         if self.subs_index > len(self._subtitle_titles):
@@ -1084,7 +1128,7 @@ class Panel(QWidget):
         выставить выбранную строку, получается жалоба «выбор не действует,
         играет другая».
         """
-        if "translations" in state:
+        if "translations" in state and not self._translation_busy:
             self._fill_translations(state)
         chosen = state.get("translationIndex")
         if not isinstance(chosen, int) or isinstance(chosen, bool):
@@ -1337,6 +1381,7 @@ class Panel(QWidget):
         исправной кнопкой.
         """
         self._muted = not self._muted
+        diag_log("ui", f"нажата кнопка Звук → {'выключить' if self._muted else 'включить'}")
         # Одна команда, и она трогает только `v.muted`. Ни play(), ни pause():
         # жалоба была «нажал Звук — видео встало».
         self._cmd("mute", self._muted)
@@ -1358,6 +1403,7 @@ class Panel(QWidget):
         команда уходит в сессию, а не в Qt.
         """
         self._fullscreen = not self._fullscreen
+        diag_log("ui", f"нажата кнопка Развернуть → {self._fullscreen}")
         self._cmd("fullscreen", self._fullscreen)
         self._set_remote_status("Развёрнуто" if self._fullscreen else "Свёрнуто")
 

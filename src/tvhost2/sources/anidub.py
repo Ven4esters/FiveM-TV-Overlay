@@ -38,7 +38,14 @@ import re
 import urllib.parse
 
 from ..core.errors import SourceFailedError
-from ..core.models import Quality, SourceState, Stream, StreamKind, sort_qualities
+from ..core.models import (
+    Quality,
+    SourceState,
+    Stream,
+    StreamKind,
+    episode_number,
+    sort_qualities,
+)
 from ..web.fetch import FetchError, fetch
 
 log = logging.getLogger(__name__)
@@ -149,12 +156,6 @@ def playlist_episodes(html: str) -> list[dict[str, str]]:
             }
         )
     return result
-
-
-def episode_number(label: str) -> int:
-    """Номер серии из подписи «7 серия» → 7. 0 — номер не разобрали."""
-    match = re.search(r"\d+", label or "")
-    return int(match.group()) if match else 0
 
 
 def pick_episode_url(player: str, episodes: list[dict[str, str]], number: int) -> str:
@@ -286,20 +287,37 @@ class AnidubSource:
         # Серии: список берём из плейлиста плеера, а нужную открываем
         # параметром `?episode=N` — ровно так делает сам сайт.
         episodes = playlist_episodes(player)
+        numbers = [episode_number(item["label"]) for item in episodes]
         current_episode = 0
-        if episodes:
-            wanted = int(episode or 0)
-            if wanted <= 0:
-                wanted = episode_number(episodes[0]["label"]) or 1
-            numbers = [episode_number(item["label"]) for item in episodes]
+        wanted = int(episode or 0)
+        if episodes and wanted <= 0:
+            # Ничего не просили — берём первую строку списка КАК ЕСТЬ.
+            # Не «номер 1»: у фильма единственная запись подписана
+            # «0 серия», и поиск «1-й» давал отказ на рабочем фильме.
+            current_episode = numbers[0]
+        elif episodes:
             if wanted not in numbers:
+                # Подписи бывают без цифр («Финал», «SP») — тогда диапазон
+                # строить не из чего. Раньше здесь стоял `min()` по пустому
+                # списку, и вместо понятного отказа вылетал голый ValueError
+                # «источник не смог разобрать ссылку» — жалоба на 2.1.7.
+                known = sorted(number for number in numbers if number > 0)
+                where = (
+                    f"Доступны серии {known[0]}–{known[-1]}" if known else "список серий пуст"
+                )
                 raise SourceFailedError(
                     self.name,
                     f"у этого тайтла нет {wanted}-й серии",
-                    fix=f"Доступны серии {min(n for n in numbers if n)}–{max(numbers)}",
+                    fix=where,
                     state=SourceState.PARTIAL,
                 )
             current_episode = wanted
+        # Номера нет ни у одной записи (фильм) — переключателя не будет, и
+        # серию в подписи не показываем: «серия 0» читается как ошибка.
+        if episodes and all(number <= 0 for number in numbers):
+            episodes = []
+            current_episode = 0
+        if episodes and current_episode > 0 and wanted > 0:
             player = pick_episode_url(embed, episodes, wanted)
             try:
                 player = fetch(player).text()

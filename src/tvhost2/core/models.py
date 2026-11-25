@@ -246,6 +246,17 @@ def sort_qualities(items: list[Quality]) -> tuple[Quality, ...]:
     return tuple(sorted(seen.values(), key=lambda q: (q.height, q.bitrate_kbps), reverse=True))
 
 
+def episode_number(title: str) -> int:
+    """Номер серии из подписи строки: «7 серия» → 7. 0 — номера нет.
+
+    Нужен пульту, чтобы просить у сервера ИМЕННО ту серию, которую человек
+    выбрал: у сериалов бывают дыры в нумерации, и «индекс строки + 1» тогда
+    просит не ту серию.
+    """
+    found = re.search(r"\d+", str(title or ""))
+    return int(found.group()) if found else 0
+
+
 def episode_index(titles: list[str], number: int) -> int:
     """Строка списка, соответствующая номеру серии. -1 — такой серии нет.
 

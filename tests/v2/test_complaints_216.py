@@ -421,3 +421,87 @@ def test_217_idle_client_disconnect_is_not_logged_as_a_failure() -> None:
     source = __import__("inspect").getsource(server)
     marker = "except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)"
     assert marker in source, "журнал снова будет краснеть на каждом закрытии вкладки"
+
+
+# ---------------------------------------------------------------------------
+#  2.1.8 (отчёт на сборке 2.1.7): ValueError на anidub.com, серии
+#  отскакивали из-за опроса состояния, журнал молчал о нажатиях
+# ---------------------------------------------------------------------------
+
+
+def test_218_anidub_film_with_zero_episode_plays() -> None:
+    """У фильма единственная запись подписана «0 серия» — он должен играть.
+
+    Раньше код искал «1-ю серию», не находил и падал: `min()` по пустому
+    списку давал голый ValueError, а до него — отказ «нет 1-й серии» на
+    рабочей странице (жалоба на 2.1.7).
+    """
+    from tvhost2.sources import anidub  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(anidub.AnidubSource.resolve)
+    assert "known[0]" in source, "отказ снова может упасть на пустом диапазоне"
+    # Ноль — законный номер фильма, а не «нет серии».
+    assert anidub.episode_number("0 серия") == 0
+    assert "!= 0" not in source, "ноль отбрасывается как отсутствие номера"
+
+
+def test_218_polling_does_not_revert_the_chosen_episode() -> None:
+    """Опрос состояния не должен откатывать список, пока сервер думает.
+
+    Сервер разбирает серию 2–3 секунды, а опрос идёт каждые 800 мс с ПРЕЖНИМ
+    номером. Без флага выбор человека «отскакивал» обратно — снаружи это
+    выглядело как «серии не переключаются вовсе» (жалоба на 2.1.7).
+    """
+    panel = _panel()
+    state = {
+        "episodes": [f"{n} серия" for n in range(1, 9)],
+        "episode": 8,
+        "canSwitchEpisode": True,
+    }
+    panel._apply_state(dict(state))
+    panel.episode_box.setCurrentIndex(2)  # человек выбрал 3-ю серию
+    panel._episode_busy = True  # сервер пошёл разбирать
+    panel._apply_state(dict(state))  # опрос со старым номером
+    assert panel.episode_box.currentText() == "3 серия", "выбор отскочил на прежнюю серию"
+    panel._episode_busy = False
+    panel._apply_state({**state, "episode": 3})  # сервер ответил
+    assert panel.episode_box.currentText() == "3 серия"
+
+
+def test_218_episode_number_comes_from_the_label() -> None:
+    """Серия — из подписи строки, а не «индекс + 1»: бывают дыры в нумерации."""
+    from tvhost2.core.models import episode_number  # noqa: PLC0415
+
+    assert episode_number("7 серия") == 7
+    assert episode_number("Финал") == 0
+
+
+def test_218_clicks_are_written_to_the_journal() -> None:
+    """Нажатие и отправка команды видны в журнале, а не только отказы."""
+    from tvhost2.ui import panel  # noqa: PLC0415
+
+    clicks = (
+        "_cmd",
+        "_episode_picked",
+        "_translation_changed",
+        "_toggle_mute",
+        "_toggle_fullscreen",
+    )
+    for name in clicks:
+        source = __import__("inspect").getsource(getattr(panel.Panel, name))
+        assert "diag_log(" in source, f"{name} ничего не пишет в журнал"
+
+
+def test_218_player_reports_received_commands() -> None:
+    """Плеер подтверждает получение команды — иначе обрыв не найти."""
+    html = _html()
+    assert '"/trace/"' in html, "плеер не сообщает о полученных командах"
+    assert "плеер получил" in html
+
+
+def test_218_trace_route_exists() -> None:
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(server.OverlayHandler)
+    assert '"/trace/"' in source
+    assert "def _trace" in source

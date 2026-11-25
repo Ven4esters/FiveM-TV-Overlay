@@ -389,8 +389,23 @@ SCRIPT = """
   }
 
   // ---------------- команды из оверлея ----------------
+  // Каждая полученная команда пишется в журнал на сервере: без этого по
+  // жалобе «нажал, а ничего не произошло» невозможно понять, где обрыв —
+  // пульт не отправил, сервер не отдал или плеер не применил.
+  function trace(text) {
+    try {
+      fetch(BASE + "/trace/" + SID, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: String(text).slice(0, 300) })
+      }).catch(function () {});
+    } catch (e) {}
+  }
+
   function applyCommand(c) {
     var val = c.value;
+    var applied = true;
+    trace("плеер получил " + c.cmd + "=" + val);
     switch (c.cmd) {
       case "play":       startPlayback(); break;
       case "pause":      v.pause(); break;

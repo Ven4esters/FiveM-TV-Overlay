@@ -327,9 +327,14 @@ class OverlayHandler(BaseHTTPRequestHandler):
             200, {"text": diag.JOURNAL.tail_text(limit), "entries": diag.JOURNAL.tail_json(limit)}
         )
 
-    def _route_post(self, path: str, query: dict[str, list[str]]) -> None:
+    def _route_post(  # noqa: PLR0911 — плоский список маршрутов читается лучше
+        self, path: str, query: dict[str, list[str]]
+    ) -> None:
         if path.startswith("/control/"):
             self._control(path[len("/control/") :].strip("/"), query)
+            return
+        if path.startswith("/trace/"):
+            self._trace(path[len("/trace/") :].strip("/"))
             return
         if path.startswith("/report/"):
             self._report(path[len("/report/") :].strip("/"))
@@ -498,6 +503,24 @@ class OverlayHandler(BaseHTTPRequestHandler):
         seq, commands = STATE.runtime_for(sid).since(since)
         return self._json(200, {"seq": seq, "commands": commands})
 
+    def _trace(self, sid: str) -> None:
+        """Плеер сообщает, что получил команду. Строка уходит в журнал.
+
+        Зачем отдельный маршрут, а не общий `/report`: отчёт приходит дважды
+        в секунду, а трассировка — только по событиям. Смешав их, мы бы
+        утопили журнал отчётами.
+        """
+        length = int(self.headers.get("Content-Length") or 0)
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            data = json.loads(raw or b"{}")
+        except json.JSONDecodeError:
+            return self._json(400, {"error": "битый JSON"})
+        text = str(data.get("text") or "").strip()
+        if text:
+            diag.log("player", f"[{sid}] {text[:300]}")
+        return self._json(200, {"ok": True})
+
     def _report(self, sid: str) -> None:
         if STATE.sessions.get(sid) is None:
             return self._json(404, {"error": "сессия не найдена"})
@@ -522,6 +545,12 @@ class OverlayHandler(BaseHTTPRequestHandler):
         if not tracks or not (0 <= index < len(tracks)):
             return self._json(400, {"error": "нет такой озвучки"})
         session.translation_index = index
+        diag.log(
+            "ui",
+            f"[{sid}] запрос озвучки {index} "
+            f"({tracks[index].get('title') if index < len(tracks) else '?'}), "
+            f"серия {(session.stream.episode if session.stream else 0)}",
+        )
         # Номер серии ОБЯЗАТЕЛЕН при повторном разборе. Без него источник
         # начинает с первой серии: у anidub.org серия в адрес не пишется
         # (`url_with_episode` у него нет), и после смены озвучки человек
@@ -591,11 +620,13 @@ class OverlayHandler(BaseHTTPRequestHandler):
                 },
             )
         url = session.episode_url(number)
+        diag.log("ui", f"[{sid}] запрос серии {number}: разбираю {url[:90]}")
         try:
             resolved = resolver.resolve(
                 url, translation_index=session.translation_index, episode=number
             )
         except resolver.ResolveError as exc:
+            diag.log("err", f"[{sid}] серия {number} не открылась: {exc.message}")
             return self._json(200, {"ok": False, "reason": exc.message})
         session.url = url
         session.stream = resolved.stream
