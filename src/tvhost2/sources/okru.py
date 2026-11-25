@@ -70,8 +70,14 @@ class OkRuSource(YtDlpSource):
         """
         best: dict[int, Quality] = {}
         for fmt in info.get("formats") or []:
-            url = str(fmt.get("url") or "")
-            if not url or "m3u8" not in str(fmt.get("protocol") or ""):
+            if "m3u8" not in str(fmt.get("protocol") or ""):
+                continue
+            # Поле `url` у OK.ru обрезано: оно кончается на ".../video/" без
+            # имени файла, и запрос по нему отдаёт 400 Bad Request. Рабочий
+            # адрес лежит в `manifest_url` — ".../video.m3u8?cmd=videoPlayerCdn&...".
+            # Проверено живьём: с `url` видео не играло вовсе.
+            url = str(fmt.get("manifest_url") or fmt.get("url") or "")
+            if not url:
                 continue
             height = int(fmt.get("height") or 0)
             if height <= 0:
