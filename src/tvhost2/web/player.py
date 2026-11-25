@@ -266,6 +266,42 @@ SCRIPT = """
   }
 
   // ---------------- запуск воспроизведения ----------------
+  // Что ЧЕЛОВЕК хочет со звуком. Отдельно от `v.muted`, потому что браузер
+  // волен поменять `v.muted` сам (политика автовоспроизведения), и раньше
+  // это молча затирало выбор человека: «нажал Звук — включилось, нажал Play
+  // — звук пропал».
+  var wantSound = true;
+  var soundBlocked = false;
+
+  // Поставить звук по желанию человека и ПРОВЕРИТЬ результат.
+  function setSound(on, why) {
+    wantSound = !!on;
+    if (on) {
+      if (v.volume === 0) v.volume = __START_VOL__;
+      v.muted = false;
+    } else {
+      v.muted = true;
+    }
+    paint();
+    trace("звук " + (on ? "вкл" : "выкл") + " (" + (why || "кнопка") + ")" +
+          ": muted=" + v.muted + " volume=" + v.volume.toFixed(2) +
+          " paused=" + v.paused);
+    // Chromium ставит видео на паузу, если звук включили без действия
+    // человека. Проверяем через мгновение и честно сообщаем, что вышло.
+    setTimeout(checkSound, 350);
+  }
+
+  function checkSound() {
+    if (v.muted) { soundBlocked = false; return; }   // выключили — так и надо
+    if (!v.paused) { soundBlocked = false; return; }  // играет со звуком — хорошо
+    soundBlocked = true;
+    trace("звук: браузер поставил на паузу (политика автовоспроизведения) — " +
+          "продолжаю без звука");
+    v.muted = true;
+    startPlayback();
+    toast("Звук не разрешён браузером — нажмите на картинку");
+  }
+
   function startPlayback() {
     var p = v.play();
     if (!p || !p.catch) return;
@@ -278,6 +314,11 @@ SCRIPT = """
       // отработал, и повторное снятие mute не ставит видео на паузу —
       // пауза и была жалобой «нажал Звук — видео встало».
       v.muted = true;
+      // Именно здесь раньше терялся звук: catch глушил видео ВСЕГДА, даже
+      // когда человек только что сам просил «звук включить». Теперь выбор
+      // помним в `wantSound`, а в журнал пишем, что именно произошло.
+      trace("play() отклонён браузером — продолжаю без звука" +
+            (wantSound ? ", звук просили включить" : ""));
       var p2 = v.play();
       if (p2 && p2.catch) p2.catch(function () {
         bigplay.style.display = "flex";
@@ -365,6 +406,11 @@ SCRIPT = """
         if (!data) return;
         var reason = data.details || ("HLS-ошибка " + (data.type || ""));
         var code = data.response && data.response.code ? " HTTP " + data.response.code : "";
+        // В журнал — ЛЮБАЯ ошибка, включая нефатальные: «ошибка декодирования»
+        // у hls.js проходит как MEDIA_ERROR и часто не фатальна, поэтому
+        // раньше она не попадала никуда и жалобу не с чем было сопоставить.
+        trace("HLS " + (data.fatal ? "fatal " : "") + reason + code +
+              " t=" + (v.currentTime || 0).toFixed(1));
         if (!data.fatal) return;
         showError("Поток не загрузился", reason + code);
         // Одна попытка восстановления: сетевые сбои часто временные.
@@ -409,7 +455,13 @@ SCRIPT = """
     switch (c.cmd) {
       case "play":       startPlayback(); break;
       case "pause":      v.pause(); break;
-      case "toggle":     if (v.paused) { startPlayback(); } else { v.pause(); } break;
+      // Play/пауза НЕ трогает звук. Раньше здесь стояло `v.muted = false`:
+      // человек выключил звук, нажал Play — и звук включился сам. Жалоба
+      // «кнопка звука и плея не работают как надо».
+      case "toggle":
+        trace("toggle: было paused=" + v.paused + " muted=" + v.muted);
+        if (v.paused) { startPlayback(); } else { v.pause(); }
+        break;
       case "seek":
         if (LIVE) { toast("В прямом эфире перемотки нет"); break; }
         v.currentTime = Number(val) || 0;
@@ -430,13 +482,9 @@ SCRIPT = """
                          unmuteOnClick = false;
                          if (v.paused) startPlayback(); break;
       case "mute":
-        var wantMute = (val === true || val === "true" || val === 1);
-        v.muted = wantMute;
-        // Включили звук — отменяем «ждём первого клика». В игре этого клика
-        // не будет никогда: страница в CEF не получает мышиных нажатий,
-        // поэтому флаг оставался взведённым до перезапуска игры, и звук
-        // «включался только после клика в браузере».
-        if (!wantMute) { unmuteOnClick = false; paint(); }
+        // Одно место правды о звуке: ставит `v.muted`, помнит желание
+        // человека и проверяет, не поставил ли браузер паузу.
+        setSound(!(val === true || val === "true" || val === 1), "пульт");
         break;
       case "normalize":  setNormalize(val === true || val === "true" || val === 1); break;
       case "quality":
@@ -652,15 +700,15 @@ SCRIPT = """
     v.currentTime = Math.min(dur, v.currentTime + __FWD__); showUI(); }
 
   function actToggle() {
-    if (v.paused) { v.muted = false; startPlayback(); } else { v.pause(); }
+    // Звук не трогаем: плей/пауза — только про воспроизведение.
+    if (v.paused) { startPlayback(); } else { v.pause(); }
     showUI();
   }
 
   function actMute() {
-    v.muted = !v.muted;
-    if (!v.muted && v.volume === 0) v.volume = 1;
-    paint();
-    toast(v.muted ? "Звук выключен" : "Звук включён");
+    var on = v.muted;   // было выключено — включаем
+    setSound(on, "кнопка плеера");
+    toast(on ? "Звук включён" : "Звук выключен");
   }
 
   function actFull() {
@@ -745,9 +793,13 @@ SCRIPT = """
       .catch(function () {});
   }
 
+  // Ошибка самого элемента <video>: сюда приходит «не воспроизводится»
+  // у прямых mp4 (anidub.org) — код 3 = MEDIA_ERR_DECODE.
   v.addEventListener("error", function () {
     var e = v.error;
     if (!e) return;
+    trace("video.error код=" + e.code + " (" + (e.message || "без текста") + ") t=" +
+          (v.currentTime || 0).toFixed(1) + " src=" + String(v.currentSrc || "").slice(0, 60));
     var codes = {
       1: "загрузка прервана", 2: "сбой сети",
       3: "ошибка декодирования", 4: "формат не поддерживается"

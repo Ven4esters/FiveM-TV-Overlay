@@ -93,6 +93,7 @@ def fetch(
     extra_headers: dict[str, str] | None = None,
     timeout: int = TIMEOUT_S,
     max_bytes: int | None = None,
+    range_header: str = "",
 ) -> Response:
     """Запрос GET с разбором ошибок.
 
@@ -109,7 +110,14 @@ def fetch(
         return _fetch_file(url, max_bytes)
     # не-ASCII в адресе ломает putrequest (это был реальный сбой ERR-081)
     safe_url = urllib.parse.quote(url, safe=":/?&=#%+@!$'()*,;[]~")
-    request = urllib.request.Request(safe_url, headers=headers_for(url, extra_headers))
+    request_headers = headers_for(url, extra_headers)
+    if range_header:
+        # Просьба «дай кусок» уходит источнику КАК ЕСТЬ. Без этого браузер
+        # не может перематывать прямой mp4: файл 415 МБ он получал целиком
+        # и обрезанным на 8 МБ, отсюда «ошибка декодирования» при
+        # перемотке на ±10 секунд.
+        request_headers["Range"] = range_header
+    request = urllib.request.Request(safe_url, headers=request_headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read(max_bytes) if max_bytes else response.read()

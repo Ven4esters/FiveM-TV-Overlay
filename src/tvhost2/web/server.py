@@ -52,6 +52,8 @@ STATIC_DIR = resources.resource("web", "static")
 """Страница плеера и hls.min.js. В .exe — распакованная копия (resources.py)."""
 HLS_JS_NAME = "hls.min.js"
 MAX_COMMANDS = 200
+HTTP_PARTIAL = 206
+"""Частичный ответ: столько отдаём при перемотке (Range)."""
 """Предел очереди команд: если плеер не отвечает час, очередь не растёт."""
 
 
@@ -170,13 +172,25 @@ class OverlayHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     # ---------------- утилиты ответов ----------------
-    def _send(self, status: int, body: bytes, ctype: str, cache: str = "no-store") -> None:
+    def _send(
+        self,
+        status: int,
+        body: bytes,
+        ctype: str,
+        cache: str = "no-store",
+        extra: dict[str, str] | None = None,
+    ) -> None:
         try:
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Cache-Control", cache)
+            # Accept-Ranges обязателен: без него браузер считает файл
+            # неразмеченным и не пробует перематывать вовсе.
+            self.send_header("Accept-Ranges", "bytes")
+            for name, value in (extra or {}).items():
+                self.send_header(name, value)
             self.end_headers()
             if self.command != "HEAD":
                 self.wfile.write(body)
@@ -716,17 +730,33 @@ class OverlayHandler(BaseHTTPRequestHandler):
             return self._error_playlist("нужен параметр url", 400)
         headers = _referer_headers(target)
         headers.update(self._stream_headers(target))
+        # Перемотка. Браузер просит кусок файла заголовком `Range`, и этот
+        # кусок надо попросить у источника — иначе он приходит целиком, мы
+        # режем его на 8 МБ, и плеер получает битый поток: «Видео не
+        # воспроизводится, ошибка декодирования» при ±10 секундах.
+        wanted = str(self.headers.get("Range") or "").strip()
         try:
             # file:// — склейка ffmpeg (видео+звук): отдаём плейлист и сегменты
             # с диска тем же путём, что и сетевые. Отдельной ветки не нужно:
             # fetch умеет и локальные файлы, а rewrite — абсолютные пути.
-            response = fetch(target, headers, max_bytes=8 * 1024 * 1024)
+            response = fetch(
+                target,
+                headers,
+                max_bytes=None if wanted else 8 * 1024 * 1024,
+                range_header=wanted,
+            )
         except FetchError as exc:
             return self._error_playlist(exc.reason, exc.status)
 
         if not hls_bridge.is_playlist(response.body):
-            # сегмент: отдаём как есть, без попыток «переписать»
+            # сегмент или кусок файла: отдаём как есть, без «переписывания»
             ctype = response.content_type or "video/mp2t"
+            if response.status == HTTP_PARTIAL:
+                extra: dict[str, str] = {}
+                content_range = response.headers.get("content-range")
+                if content_range:
+                    extra["Content-Range"] = content_range
+                return self._send(HTTP_PARTIAL, response.body, ctype, extra=extra)
             return self._send(200, response.body, ctype, cache="no-store")
 
         text = response.text()

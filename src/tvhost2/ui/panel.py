@@ -28,11 +28,13 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QCompleter,
     QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QPlainTextEdit,
@@ -66,6 +68,35 @@ STATE_LABELS = {
     "broken": ("не работает", "stateErr"),
     "browser_only": ("только браузер", "stateWarn"),
 }
+
+
+def _scrollable(box: QComboBox, rows: int = 18) -> None:
+    """Сделать выпадающий список прокручиваемым и не гигантским.
+
+    Зачем: у сериала бывает 1180 серий (anidub.org, «Ван-Пис»), у yani.tv —
+    22 озвучки. Стандартный `QComboBox` показывает лишь несколько строк и
+    не даёт добраться до остальных мышью: список обрезается, а колесо мыши
+    на закрытом поле просто меняет соседние значения. Снаружи это выглядит
+    как «ставлю 2-ю серию, а приложение считает, что 1-я» — человек
+    физически не мог выбрать другую строку.
+
+    Свой `QListView` + явный предел строк даёт нормальную полосу прокрутки,
+    поиск по первым буквам и список ровно на 18 строк вместо простыни на
+    весь экран.
+    """
+    view = QListView(box)
+    view.setUniformItemSizes(True)
+    view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    box.setView(view)
+    box.setMaxVisibleItems(rows)
+    box.setEditable(True)
+    box.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+    # Ввод текста — только поиск, а не «создать новую серию».
+    completer = box.completer()
+    if completer is not None:
+        completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
 
 class Panel(QWidget):
@@ -444,8 +475,7 @@ class Panel(QWidget):
         self.remote_status.setWordWrap(True)
         head.addWidget(self.remote_status, 1)
 
-        self.quality_box = QComboBox()
-        self.quality_box.setToolTip("Качество видео")
+        self.quality_box = self._make_pick("Качество видео", hidden=False)
         self.quality_box.setMinimumWidth(120)
         # Минимум по высоте: при сжатии селектор «Авто» перекрывал время
         # справа — правый край уходил за пределы строки.
@@ -510,16 +540,30 @@ class Panel(QWidget):
         """
         picks = QHBoxLayout()
         picks.setSpacing(theme.GAP_S)
-        self.translation_box = QComboBox()
-        self.translation_box.setToolTip("Озвучка")
-        self.translation_box.setVisible(False)
+        self.translation_box = self._make_pick("Озвучка")
         picks.addWidget(self.translation_box, 1)
-
-        self.episode_box = QComboBox()
-        self.episode_box.setToolTip("Серия")
-        self.episode_box.setVisible(False)
+        self.episode_box = self._make_pick("Серия")
         picks.addWidget(self.episode_box, 0)
         return picks
+
+    @staticmethod
+    def _make_pick(tooltip: str, hidden: bool = True) -> QComboBox:
+        """Выпадающий список выбора — с прокруткой и поиском.
+
+        Вынесено отдельным методом: у сериала бывает 1180 серий, и обычный
+        `QComboBox` их не даёт выбрать — список обрезается, а колесо мыши на
+        закрытом поле листает соседние значения. Снаружи это выглядит как
+        «ставлю 2-ю серию, а приложение считает, что 1-я».
+
+        `hidden=True` — озвучка и серия скрыты, пока сервер не сказал, что
+        выбирать есть из чего. Качество видно всегда: оно есть у любого
+        потока, и прятать его незачем.
+        """
+        box = QComboBox()
+        box.setToolTip(tooltip)
+        box.setVisible(not hidden)
+        _scrollable(box)
+        return box
 
     def _build_volume_controls(self, buttons) -> None:
         """Громкость и нормализация — отдельно: блок пульта не должен

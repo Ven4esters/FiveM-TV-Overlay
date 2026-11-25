@@ -505,3 +505,114 @@ def test_218_trace_route_exists() -> None:
     source = __import__("inspect").getsource(server.OverlayHandler)
     assert '"/trace/"' in source
     assert "def _trace" in source
+
+
+# ---------------------------------------------------------------------------
+#  2.1.9 (отчёт на сборке 2.1.8, с журналом): звук затирался, серии не
+#  выбрать из-за списка, ошибка декодирования при перемотке
+# ---------------------------------------------------------------------------
+
+
+def test_219_play_does_not_touch_the_sound() -> None:
+    """Play/пауза — только про воспроизведение, звук не трогает.
+
+    Журнал заказчика: `toggle` шёл между нажатиями «Звук», и звук пропадал.
+    Причина — `v.muted = false` в `actToggle`: человек выключил звук, нажал
+    Play, и звук включился сам.
+    """
+    html = _html()
+    start = html.index('case "toggle"')
+    block = html[start : html.index('case "seek"', start)]
+    assert "v.muted =" not in block, "toggle снова ПРИСВАИВАЕТ звук"
+    assert "startPlayback()" in block, "toggle должен запускать воспроизведение"
+
+
+def test_219_player_button_toggle_does_not_touch_the_sound() -> None:
+    html = _html()
+    start = html.index("function actToggle()")
+    block = html[start : html.index("function actMute()", start)]
+    # `v.muted` в диагностической строке — можно, присваивание — нельзя.
+    assert "v.muted =" not in block, "кнопка Play на самом плеере снова глушит звук"
+
+
+def test_219_sound_choice_is_remembered() -> None:
+    """Выбор человека по звуку живёт отдельно от `v.muted`."""
+    html = _html()
+    assert "var wantSound" in html, "нет памяти о желаемом состоянии звука"
+    assert "function setSound(" in html, "нет единой точки правды о звуке"
+    assert "function checkSound(" in html, "результат включения не проверяется"
+
+
+def test_219_sound_command_goes_through_one_place() -> None:
+    html = _html()
+    start = html.index('case "mute"')
+    block = html[start : html.index('case "normalize"', start)]
+    assert "setSound(" in block, "команда звука обходит общую функцию"
+
+
+def test_219_dropdowns_are_scrollable() -> None:
+    """1180 серий нельзя выбрать стандартным выпадающим списком."""
+    from tvhost2.ui import panel  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(panel._scrollable)
+    assert "QListView" in source
+    assert "setMaxVisibleItems" in source
+    # Все три селектора создаются через общий помощник — значит все с прокруткой.
+    build = __import__("inspect").getsource(panel.Panel._make_pick)
+    assert "_scrollable(box)" in build
+    for name in ("episode_box", "translation_box", "quality_box"):
+        assert f"_make_pick(" in __import__("inspect").getsource(panel.Panel)
+
+
+def test_219_scrollable_list_limits_rows() -> None:
+    panel = _panel()
+    panel._apply_state(
+        {
+            "episodes": [f"{n} серия" for n in range(1, 1181)],
+            "episode": 1,
+            "canSwitchEpisode": True,
+        }
+    )
+    assert panel.episode_box.count() == 1180
+    assert panel.episode_box.maxVisibleItems() <= 25, "список занимает весь экран"
+    assert panel.episode_box.isEditable(), "нет поиска по номеру серии"
+
+
+def test_219_range_requests_are_forwarded() -> None:
+    """Перемотка прямого mp4 невозможна без проброса Range.
+
+    415-МБ файл anidub.org отдавался целиком и обрезался на 8 МБ — отсюда
+    «ошибка декодирования» при перемотке на ±10 секунд.
+    """
+    from tvhost2.web import fetch as fetch_mod  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(fetch_mod.fetch)
+    assert "range_header" in source
+    assert '"Range"' in source
+
+
+def test_219_bridge_answers_206() -> None:
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(server.OverlayHandler._bridge)
+    assert "range_header=wanted" in source, "Range не уходит источнику"
+    assert "HTTP_PARTIAL" in source, "ответ не помечается как частичный"
+    assert "Content-Range" in source
+
+
+def test_219_accept_ranges_is_always_announced() -> None:
+    """Без Accept-Ranges браузер даже не пробует перематывать."""
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(server.OverlayHandler._send)
+    assert 'send_header("Accept-Ranges", "bytes")' in source
+
+
+def test_219_player_errors_reach_the_journal() -> None:
+    """«Ошибка декодирования» должна попадать в журнал, а не в никуда."""
+    html = _html()
+    # Нефатальные ошибки hls.js раньше отбрасывались молча.
+    start = html.index("Hls.Events.ERROR")
+    block = html[start : start + 700]
+    assert "trace(" in block, "ошибки потока не пишутся в журнал"
+    assert "video.error" in html, "ошибка <video> не пишется в журнал"
