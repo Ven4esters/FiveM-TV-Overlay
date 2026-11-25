@@ -150,6 +150,18 @@ start.bat
 The script creates the `.venv` environment, installs dependencies and opens the
 panel. The first run takes a few minutes: PySide6 is being installed.
 
+> **Do not run a `.bat` from PowerShell as `build.bat`.** PowerShell does not
+> search the current folder — that is its protection against command
+> substitution — and answers `build.bat is not recognized as the name of a
+> cmdlet`. Three ways that work:
+>
+> - **double-click** the file in Explorer (the simplest);
+> - `.\build.bat` — with a dot and a backslash;
+> - `cmd /c build.bat` — run through the command prompt.
+>
+> If the window closes instantly on a double click, a `build-log.txt` appears
+> next to the script: it shows the step where it stopped.
+
 **Any system, by hand.** Three commands to a working panel:
 
 ```bash

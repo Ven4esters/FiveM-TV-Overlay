@@ -1,29 +1,28 @@
 @echo off
 REM ============================================================================
-REM  FiveM Video Overlay — сборка .exe
+REM  FiveM Video Overlay - ᡮઠ .exe
 REM
-REM  Один файл без установки: пользователю достаточно скачать и запустить.
-REM  Рядом с .exe ложатся .md5 и .sha256 — по ним проверяют, что файл
-REM  скачался целиком и не подменён.
+REM  �������: dist\FiveM-Video-Overlay.exe, .exe.md5, .exe.sha256
 REM
-REM  Окружение сборки отдельное: build-venv\. Оно НЕ зависит от .venv,
-REM  которым пользуется start.bat, и создаётся само при первом запуске.
-REM  Поэтому собрать .exe можно на чистой машине, даже если приложение
-REM  ни разу не запускали.
+REM  ���㦥��� ᡮન �⤥�쭮�: build-venv\. ��� �� ������ �� .venv,
+REM  ����� �������� start.bat, � ᮧ������ ᠬ�. ������ .exe �����
+REM  �� ��⮩ ��設�, ���� �᫨ �ਫ������ �� ࠧ� �� ����᪠��.
 REM
-REM  Что нужно: Python 3.10+ (64-бит) из python.org с «Add to PATH».
-REM  Сколько занимает: 3–10 минут; первый запуск дольше — ставится окружение.
+REM  �� �㦭�: Python 3.10+ (64-���) �� python.org � "Add to PATH".
+REM  �६�: 3-10 �����; ���� ����� ����� - �⠢���� ���㦥���.
 REM
-REM  Результат: dist\FiveM-Video-Overlay.exe, .exe.md5, .exe.sha256
+REM  ���������: 䠩� ��࠭� � CP866 - �� ������� ��࠭�� ���᮫� ���᪮�
+REM  Windows. chcp 65001 ����� ��� ����७��: cmd.exe � UTF-8 � .bat
+REM  ࠡ�⠥� ���⠡��쭮 � ����� ���� ������� ���� �� ��ࢮ� ��ப�.
+REM  �� �����࠭�� 䠩� � UTF-8 - ��ਫ��� �⠭�� �ࠪ���ࠬ�.
 REM ============================================================================
-chcp 65001 >nul 2>&1
 setlocal EnableExtensions EnableDelayedExpansion
 
 if not defined PYTHONIOENCODING set "PYTHONIOENCODING=utf-8"
 if not defined PYTHONUTF8 set "PYTHONUTF8=1"
 
 cd /d "%~dp0"
-title FiveM Video Overlay — сборка .exe
+title FiveM Video Overlay - ᡮઠ .exe
 
 set "BUILD_VENV=build-venv"
 set "VENV_PY=%BUILD_VENV%\Scripts\python.exe"
@@ -31,20 +30,27 @@ set "APP_NAME=FiveM-Video-Overlay"
 set "OUT_DIR=dist"
 set "EXE=%OUT_DIR%\%APP_NAME%.exe"
 set "ICON=src\tvhost2\ui\assets\app.ico"
+set "LOG=build-log.txt"
+
+REM ��ୠ� ᮧ������ �ࠧ�: �᫨ ��� ��� ��᫥ ����᪠, ����� �ਯ� ��
+REM ᬮ� ����� �����, � ��稭� � ᠬ�� 䠩��, � �� � Python.
+echo FiveM Video Overlay - ��ୠ� ᡮન> "%LOG%"
+echo ���: %DATE% %TIME%>> "%LOG%"
+echo.>> "%LOG%"
 
 echo ============================================================
-echo   FiveM Video Overlay — сборка .exe
+echo   FiveM Video Overlay - ᡮઠ .exe
+echo ============================================================
+echo   ��ୠ�: %LOG%
 echo ============================================================
 echo.
 
-REM ---------------------------------------------------------------------------
-REM  1. Python для создания окружения сборки
-REM ---------------------------------------------------------------------------
-echo [1/7] Python:
-REM Ищем базовый Python: он нужен только чтобы создать build-venv.
-REM Порядок: py -3 (лаунчер python.org) -> python из PATH.
-REM Чужой .venv здесь намеренно НЕ используется: сборка не должна зависеть
-REM от того, запускали ли приложение раньше и цел ли .venv.
+REM ===========================================================================
+REM  1. Python
+REM ===========================================================================
+set "SAY=[1/7] Python:"
+call :SAY
+
 set "PYEXE="
 where py >nul 2>&1
 if not errorlevel 1 (
@@ -56,206 +62,241 @@ if not defined PYEXE (
     if not errorlevel 1 set "PYEXE=python"
 )
 if not defined PYEXE (
-    echo   [ОШИБКА] Python не найден.
-    echo.
-    echo   Поставьте Python 3.12 с python.org и отметьте
-    echo   "Add python.exe to PATH", затем запустите build.bat снова.
-    echo   start.bat для сборки не нужен — окружение создаётся здесь.
+    set "SAY=  [������] Python �� ������."
+    call :SAY
+    set "SAY=  ���⠢�� Python 3.12 � python.org, �⬥���"
+    call :SAY
+    set "SAY=  Add python.exe to PATH � ������� build.bat ᭮��."
+    call :SAY
     goto :FAIL
 )
 
-REM 32-битный Python соберёт .exe, который не запустится у большинства:
-REM PySide6 не имеет 32-битных сборок. Проверяем ДО создания окружения,
-REM чтобы не тратить десять минут впустую.
+REM PySide6 �� ����� 32-����� ᡮப: ⠪�� .exe �� ��������� �� � ����.
+REM �஢�ઠ ���� �� ᮧ����� ���㦥���, �⮡� �� ����� ������ �����.
 %PYEXE% -c "import sys; sys.exit(0 if sys.maxsize > 2**32 else 1)"
 if errorlevel 1 (
-    echo   [ОШИБКА] Python 32-битный. Нужен 64-битный: PySide6 не собирается под 32 бита.
+    set "SAY=  [������] Python 32-����. �㦥� 64-����."
+    call :SAY
     goto :FAIL
 )
-for /f "delims=" %%V in ('%PYEXE% -c "import sys; print(sys.version.split()[0])"') do set "BASE_VER=%%V"
-echo   базовый Python !BASE_VER!
-echo.
 
-REM ---------------------------------------------------------------------------
-REM  2. Окружение сборки build-venv
-REM ---------------------------------------------------------------------------
-echo [2/7] Окружение сборки %BUILD_VENV%\:
+for /f "delims=" %%V in ('%PYEXE% -c "import sys; print(sys.version.split()[0])"') do set "BASE_VER=%%V"
+set "SAY=  ������ Python: !BASE_VER!"
+call :SAY
+call :BLANK
+
+REM ===========================================================================
+REM  2. ���㦥��� ᡮન
+REM ===========================================================================
+set "SAY=[2/7] ���㦥��� ᡮન %BUILD_VENV%\:"
+call :SAY
 if exist "%VENV_PY%" (
-    echo   уже есть — переиспользую
+    set "SAY=  㦥 ���� - ��२ᯮ����"
+    call :SAY
 ) else (
-    echo   создаю (первый раз, это занимает до минуты)...
+    set "SAY=  ᮧ���, �� �������� �� ������..."
+    call :SAY
     %PYEXE% -m venv "%BUILD_VENV%"
     if errorlevel 1 (
-        echo   [ОШИБКА] Не удалось создать %BUILD_VENV%.
-        echo   Проверьте права на папку и свободное место.
+        set "SAY=  [������] �� 㤠���� ᮧ���� %BUILD_VENV%. �஢���� �ࠢ� � ���� �� ��᪥."
+        call :SAY
         goto :FAIL
     )
     if not exist "%VENV_PY%" (
-        echo   [ОШИБКА] venv создан, но %VENV_PY% не появился.
-        echo   Обычно это значит, что Python поставлен из Microsoft Store —
-        echo   он создаёт окружения неполно. Поставьте Python с python.org.
+        set "SAY=  [������] venv ᮧ���, �� %VENV_PY% �� �����."
+        call :SAY
+        set "SAY=  ���筮 ⠪ �뢠�� � Python �� Microsoft Store: �� ᮧ����"
+        call :SAY
+        set "SAY=  ������� ���㦥���. ���⠢�� Python � python.org."
+        call :SAY
         goto :FAIL
     )
-    echo   готово
+    set "SAY=  ��⮢�"
+    call :SAY
 )
-"%VENV_PY%" -c "import sys; print('  ' + sys.version.split()[0] + ' из ' + sys.executable)"
-if errorlevel 1 goto :FAIL
-echo.
+"%VENV_PY%" -c "import sys; print('  Python ' + sys.version.split()[0])"
+if errorlevel 1 (
+    set "SAY=  [������] Python ����� %BUILD_VENV% �� ����᪠����."
+    call :SAY
+    goto :FAIL
+)
+call :BLANK
 
-REM ---------------------------------------------------------------------------
-REM  3. Зависимости сборки
-REM ---------------------------------------------------------------------------
-echo [3/7] Зависимости:
+REM ===========================================================================
+REM  3. ����ᨬ���
+REM ===========================================================================
+set "SAY=[3/7] ����ᨬ���:"
+call :SAY
 "%VENV_PY%" -m pip install --upgrade pip --quiet
-REM requirements-v2.txt — то же, что ставит start.bat: сборка обязана
-REM использовать те же версии, что и запуск, иначе .exe поведёт себя иначе.
 "%VENV_PY%" -m pip install -r requirements-v2.txt --quiet
 if errorlevel 1 (
-    echo   [ОШИБКА] Не удалось поставить runtime-зависимости.
-    echo   Проверьте интернет и прокси.
+    set "SAY=  [������] �� 㤠���� ���⠢��� runtime-����ᨬ���."
+    call :SAY
+    set "SAY=  �஢���� ���୥� � �ப�."
+    call :SAY
     goto :FAIL
 )
 
-REM PyInstaller не входит в runtime: он нужен только для сборки, поэтому
-REM ставится здесь, а не в requirements-v2.txt — иначе он поедет внутрь .exe.
+REM PyInstaller �㦥� ⮫쪮 ��� ᡮન: � requirements ��� ��� ����७��,
+REM ���� �� ������ ������ .exe.
 "%VENV_PY%" -m pip install "pyinstaller>=6.0" --quiet
 if errorlevel 1 (
-    echo   [ОШИБКА] Не удалось поставить PyInstaller.
+    set "SAY=  [������] �� 㤠���� ���⠢��� PyInstaller."
+    call :SAY
     goto :FAIL
 )
-"%VENV_PY%" -c "import PySide6, yt_dlp, imageio_ffmpeg; print('  зависимости на месте')"
+"%VENV_PY%" -c "import PySide6, yt_dlp, imageio_ffmpeg; print('  ����ᨬ��� �� ����')"
 if errorlevel 1 (
-    echo   [ОШИБКА] Зависимости не импортируются после установки.
+    set "SAY=  [������] ����ᨬ��� �� ������������ ��᫥ ��⠭����."
+    call :SAY
     goto :FAIL
 )
 "%VENV_PY%" -c "import PyInstaller; print('  PyInstaller ' + PyInstaller.__version__)"
-echo.
+call :BLANK
 
-REM ---------------------------------------------------------------------------
-REM  4. Иконка
-REM ---------------------------------------------------------------------------
-echo [4/7] Иконка:
+REM ===========================================================================
+REM  4. ������
+REM ===========================================================================
+set "SAY=[4/7] ������:"
+call :SAY
 if exist "%ICON%" (
-    echo   %ICON%
+    set "SAY=  %ICON%"
+    call :SAY
 ) else (
-    echo   [ОШИБКА] Нет файла иконки: %ICON%
-    echo   Без него .exe получит пустой значок Windows. Файл должен быть
-    echo   в репозитории; если его нет — скачайте проект заново.
+    set "SAY=  [������] ��� 䠩�� ������: %ICON%"
+    call :SAY
+    set "SAY=  ��� ���� .exe ������ ���⮩ ���箪 Windows."
+    call :SAY
     goto :FAIL
 )
-echo.
+call :BLANK
 
-REM ---------------------------------------------------------------------------
-REM  5. Чистка прошлой сборки
-REM ---------------------------------------------------------------------------
-echo [5/7] Чистка:
-REM Старые build\ и dist\ опасны не местом, а путаницей: PyInstaller
-REM переиспользует промежуточные файлы, и в .exe может уехать модуль,
-REM которого в коде уже нет. Сборка начинается с нуля.
-REM build\ чистит сам PyInstaller по ключу --clean; здесь — только dist\,
-REM потому что старый .exe иначе останется лежать рядом с новым, и легко
-REM раздать не тот файл.
+REM ===========================================================================
+REM  5. ���⪠
+REM ===========================================================================
+set "SAY=[5/7] ���⪠:"
+call :SAY
+REM ���� dist\ ���ᥭ �� ���⮬, � ��⠭�楩: ����� ࠧ���� �� �� 䠩�.
 if exist "%OUT_DIR%" rmdir /s /q "%OUT_DIR%" 2>nul
-echo   прошлый %OUT_DIR%\ удалён
-echo.
+set "SAY=  ���� %OUT_DIR%\ 㤠��"
+call :SAY
+call :BLANK
 
-REM ---------------------------------------------------------------------------
-REM  6. Сборка
-REM ---------------------------------------------------------------------------
-echo [6/7] Сборка .exe (3–10 минут, это нормально):
+REM ===========================================================================
+REM  6. ���ઠ
+REM ===========================================================================
+set "SAY=[6/7] ���ઠ .exe (3-10 �����, �� ��ଠ�쭮):"
+call :SAY
 echo.
 "%VENV_PY%" -m PyInstaller tvhost.spec --noconfirm --clean
 if errorlevel 1 (
     echo.
-    echo   [ОШИБКА] PyInstaller завершился с ошибкой. Полный журнал — build\%APP_NAME%\warn-%APP_NAME%.txt
+    set "SAY=  [������] PyInstaller �����訫�� � �訡���."
+    call :SAY
+    set "SAY=  ��ୠ� PyInstaller: build\%APP_NAME%\warn-%APP_NAME%.txt"
+    call :SAY
     goto :FAIL
 )
 echo.
 if not exist "%EXE%" (
-    echo   [ОШИБКА] Сборка прошла, но %EXE% не появился.
+    set "SAY=  [������] ���ઠ ��諠, �� %EXE% �� �����."
+    call :SAY
     goto :FAIL
 )
 
 for %%F in ("%EXE%") do set "SIZE=%%~zF"
 set /a SIZE_MB=!SIZE! / 1048576
-echo   готово: %EXE%  ^(!SIZE_MB! МБ^)
-echo.
+set "SAY=  ��⮢�: %EXE%  (!SIZE_MB! ��)"
+call :SAY
+call :BLANK
 
-REM ---------------------------------------------------------------------------
-REM  7. Контрольные суммы и итог
-REM ---------------------------------------------------------------------------
-echo [7/7] Контрольные суммы:
-REM Формат вывода certutil: «MD5 хеш алгоритма для файла:» на одной строке,
-REM сам хеш — на следующей. Ищем строку из одних шестнадцатеричных цифр,
-REM а не режем по позиции: текст вокруг переведён и меняется между версиями
-REM Windows, а сам хеш — нет.
+REM ===========================================================================
+REM  7. ����஫�� �㬬�
+REM ===========================================================================
+set "SAY=[7/7] ����஫�� �㬬�:"
+call :SAY
+REM certutil ���⠥� �� ����������, � findstr ��� /i ��� �� ��室��:
+REM MD5 ������� �����, � ᡮઠ ������ �� ஢��� ����. �஢�७�.
 set "MD5="
 set "SHA="
-REM Внимание на регистр: certutil печатает хеш ЗАГЛАВНЫМИ, а findstr без /i
-REM не найдёт ни одной строки — MD5 останется пустым, и сборка «упадёт» на
-REM ровном месте при существующем файле. Это не теория: проверено.
-REM Хеш приводим к нижнему регистру сами, чтобы совпадал с тем, что печатают
-REM sha256sum и Get-FileHash, и с тем, что вписано в README.
 for /f "delims=" %%L in ('certutil -hashfile "%EXE%" MD5 ^| findstr /r /i "^[0-9a-f][0-9a-f]*$"') do if not defined MD5 set "MD5=%%L"
 for /f "delims=" %%L in ('certutil -hashfile "%EXE%" SHA256 ^| findstr /r /i "^[0-9a-f][0-9a-f]*$"') do if not defined SHA set "SHA=%%L"
 
-REM Приводим к нижнему регистру — ровно то, что печатают sha256sum и
-REM Get-FileHash. Регистр на проверку не влияет (`sha256sum -c` принимает
-REM и заглавные), но читатель сравнивает глазами, а «D168…» и «d168…» —
-REM две разные строки на вид, и это лишний повод для вопроса.
 if defined MD5  set "MD5=!MD5:A=a!" & set "MD5=!MD5:B=b!" & set "MD5=!MD5:C=c!" & set "MD5=!MD5:D=d!" & set "MD5=!MD5:E=e!" & set "MD5=!MD5:F=f!"
 if defined SHA  set "SHA=!SHA:A=a!" & set "SHA=!SHA:B=b!" & set "SHA=!SHA:C=c!" & set "SHA=!SHA:D=d!" & set "SHA=!SHA:E=e!" & set "SHA=!SHA:F=f!"
 
 if not defined MD5 (
-    echo   [ОШИБКА] Не удалось посчитать MD5 — certutil недоступен?
+    set "SAY=  [������] �� 㤠���� ������� MD5 - certutil ������㯥�?"
+    call :SAY
     goto :FAIL
 )
 if not defined SHA (
-    echo   [ОШИБКА] Не удалось посчитать SHA256.
+    set "SAY=  [������] �� 㤠���� ������� SHA256."
+    call :SAY
     goto :FAIL
 )
 
-REM Файлы в формате, который понимают обе стороны: `md5sum -c` и
-REM `sha256sum -c` на Linux, PowerShell `Get-FileHash` — на Windows.
-REM Два пробела между хешем и именем — это формат «текстовый», не «двоичный»:
-REM с одним пробелом часть инструментов считает файл бинарным.
+REM ��� �஡��� ����� �襬 � ������ - "⥪�⮢�" �ଠ�: ��� ��������
+REM md5sum -c, sha256sum -c � Get-FileHash.
 > "%EXE%.md5"    echo !MD5!  %APP_NAME%.exe
 > "%EXE%.sha256" echo !SHA!  %APP_NAME%.exe
 
-echo   MD5:    !MD5!
-echo   SHA256: !SHA!
-echo   записаны в %EXE%.md5 и %EXE%.sha256
-echo.
+set "SAY=  MD5:    !MD5!"
+call :SAY
+set "SAY=  SHA256: !SHA!"
+call :SAY
+set "SAY=  ����ᠭ� � %EXE%.md5 � %EXE%.sha256"
+call :SAY
+call :BLANK
 
 echo ============================================================
-echo   Готово.
+echo   ������
 echo.
-echo   Файлы для раздачи:
+echo   ����� ��� ࠧ���:
 echo     %EXE%
 echo     %EXE%.md5
 echo     %EXE%.sha256
 echo.
-echo   Проверить перед раздачей:
-echo     PowerShell:  Get-FileHash "%EXE%" -Algorithm SHA256
-echo     Linux/macOS: sha256sum -c %APP_NAME%.exe.sha256
+echo   �஢����:  Get-FileHash "%EXE%" -Algorithm SHA256
 echo.
-echo   Окружение сборки осталось в %BUILD_VENV%\ — его можно удалить,
-echo   на работу приложения это не влияет. При следующей сборке оно
-echo   создастся заново.
-echo.
-echo   Приложение оконное: журнал смотрите на вкладке «Журнал» пульта,
-echo   а не в консоли — её у .exe нет.
+echo   ���㦥��� ᡮન: %BUILD_VENV%\ - ����� 㤠����,
+echo   �� ࠡ��� �ਫ������ �� �� �����.
 echo ============================================================
+>>"%LOG%" echo.
+>>"%LOG%" echo ============================================================
+>>"%LOG%" echo   ������
+>>"%LOG%" echo   �����: %EXE%, .md5, .sha256
+>>"%LOG%" echo ============================================================
 echo.
 pause
+exit /b 0
+
+REM ===========================================================================
+REM  ����ணࠬ��
+REM ===========================================================================
+:SAY
+REM ���⠥� ��ப� �� SAY �� ��࠭ � � ��ୠ�.
+REM ��祬� �१ ��६�����, � �� �१ %*: ����� cmd �ꥤ��� ������� %
+REM � ��㬥��� ��� �� �맮��, � � ��ୠ� �������� �� �᪠�񭭮� ���祭��.
+REM ���祭�� SAY 㦥 ࠧ����� �� ��ப� set, ���⮬� ����� ����� ���.
+echo !SAY!
+>>"%LOG%" echo !SAY!
+exit /b 0
+
+:BLANK
+echo.
+>>"%LOG%" echo.
 exit /b 0
 
 :FAIL
 echo.
 echo ============================================================
-echo   СБОРКА НЕ УДАЛАСЬ — .exe не создан.
-echo   Текст ошибки выше. Если не помогло — пришлите его целиком.
+echo   ������ �� ������� - .exe �� ᮧ���.
+echo   ��稭� ���. ��ୠ� 楫����: %LOG%
+echo   ��諨� ��� 䠩�, �᫨ ��稭� �� �᭠.
 echo ============================================================
+>>"%LOG%" echo.
+>>"%LOG%" echo ============ ������ �� ������� ============
 echo.
 pause
 exit /b 1
