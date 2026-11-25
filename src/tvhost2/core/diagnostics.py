@@ -29,7 +29,28 @@ MAX_VALUE_CHARS = 160
 MAX_LINES = 4000
 """Сколько строк держим. 4000 хватает на несколько дней работы."""
 
-LOG_PATH = Path("videos/cache/overlay.log")
+def _default_log_path() -> Path:
+    """Файл журнала: рядом с приложением, а не в текущем каталоге процесса.
+
+    Почему не `Path("videos/cache/overlay.log")`, как было: относительный
+    путь считается от ТЕКУЩЕГО каталога. При двойном клике по .exe это папка
+    файла, но из ярлыка, из `от имени администратора` или из проводника с
+    другим рабочим каталогом это могла быть совсем другая папка — и журнал
+    оказывался не там, где его искали. Хуже: папка могла быть защищена, и
+    запись молча падала (`_append_file` глушит OSError).
+
+    В сборке берём папку .exe (`resources.app_dir()`), в исходниках — корень
+    проекта. Это то место, которое человек реально видит рядом с программой.
+    """
+    try:
+        from . import resources  # noqa: PLC0415
+
+        return resources.app_dir() / "videos" / "cache" / "overlay.log"
+    except Exception:
+        return Path("videos/cache/overlay.log")
+
+
+LOG_PATH = _default_log_path()
 
 KINDS = ("info", "new", "req", "boot", "err", "player")
 

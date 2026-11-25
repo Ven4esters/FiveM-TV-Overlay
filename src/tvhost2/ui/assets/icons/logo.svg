@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <!-- Логотип приложения в виде контурной иконки.
+       Тот же образ, что у app.ico (телевизор с антеннами и кнопкой Play),
+       но без тёмной плашки: в шапке окна фон сам тёмный, и квадрат
+       сливался бы с ним. Цвета взяты пипеткой из app.ico:
+       контур #4A32A0, кнопка #A8600F, блик #FAF9F6. -->
+  <rect x="2.6" y="7.4" width="18.8" height="13" rx="2.2"
+        stroke="#4A32A0" stroke-width="1.9"/>
+  <path d="M8.1 7.1 5.3 4.1M15.9 7.1l2.8-3"
+        stroke="#4A32A0" stroke-width="1.9" stroke-linecap="round"/>
+  <circle cx="20" cy="10.4" r="0.95" fill="#A8600F"/>
+  <circle cx="12" cy="13.9" r="3.05" fill="#A8600F"/>
+  <path d="M11.05 12.55v2.7l2.25-1.35z" fill="#FAF9F6"/>
+</svg>

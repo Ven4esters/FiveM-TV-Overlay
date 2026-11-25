@@ -522,9 +522,17 @@ path is printed, reinstall the dependency: `pip install imageio-ffmpeg`.
 <details>
 <summary>Video does not play — how to send a report</summary>
 
-The **Journal** tab is the first place to look. Press the copy button next to the
-"Journal" caption: the clipboard gets the whole journal, including an environment
-snapshot (Python, yt-dlp, ffmpeg, paths).
+The **Journal** tab is the first place to look. It has two buttons:
+
+- **Copy journal** (copy icon) — the full event history;
+- **Error report** (question icon) — a state snapshot: version, `frozen`
+  (built .exe or sources), paths, Python, yt-dlp, ffmpeg, **port state**,
+  **a real request to the server**, **system proxy** and the journal tail.
+
+**If the journal is empty, press "Error report".** It is assembled without the
+server and answers "what is actually going on". In the build it is also written
+to `videos/cache/overlay.log` next to the `.exe` — that file opens in Notepad
+even if the window will not start.
 
 What to look at first:
 

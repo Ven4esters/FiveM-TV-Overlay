@@ -24,7 +24,8 @@ from http.server import ThreadingHTTPServer
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
-from ..core import resources
+from .. import __version__
+from ..core import diagnostics, resources
 from . import theme
 from .api import Api
 from .panel import Panel
@@ -78,6 +79,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--listen", default="0.0.0.0", help="адрес прослушивания для --serve")
     args = parser.parse_args(argv)
 
+    # Журнал и отметка запуска — ДО всего остального. Если программа упадёт
+    # при создании QApplication или при поднятии сервера, в файле останется
+    # след: иначе человек видит «ничего не произошло» и пустой журнал.
+    diagnostics.mark_start()
+    diagnostics.log(
+        "boot",
+        f"пульт {__version__}: порт {args.port}, --serve={'да' if args.serve else 'нет'}, "
+        f"сборка={'да' if resources.FROZEN else 'нет'}",
+    )
+
     # Фильтр ставится ДО QApplication: иначе первые же сообщения Qt
     # про stylesheet попадут в консоль и напугают заказчика.
     theme.silence_style_warnings()
@@ -98,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
             # если на порту уже живёт НАШ прокси, пульт к нему подключится
             # и покажет «прокси: работает».
             log.error("прокси не поднялся на порту %s: %s", args.port, exc)
+            diagnostics.log("err", f"прокси не поднялся на порту {args.port}: {exc}")
 
     panel = Panel(api=Api(base=f"http://127.0.0.1:{args.port}"))
     panel.show()

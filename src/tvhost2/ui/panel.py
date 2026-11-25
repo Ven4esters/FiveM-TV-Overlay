@@ -21,7 +21,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import threading
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -47,7 +46,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME, __version__
-from ..core import registry
+from ..core import diag_report, diagnostics, registry
 from ..core.models import episode_index
 from ..sources import register_all
 from . import theme
@@ -72,6 +71,9 @@ class Panel(QWidget):
     session_ready = Signal(str, str)  # (адрес страницы, sid)
     state_arrived = Signal(dict)
     journal_arrived = Signal(str)
+    local_line = Signal(str)
+    report_ready = Signal(str)
+    """Строка, которую пульт написал САМ (сеть не участвует)."""
     sources_arrived = Signal(list)
     error_text = Signal(str, str)  # (что случилось, что делать)
     loudness_arrived = Signal(str)
@@ -82,6 +84,10 @@ class Panel(QWidget):
     def __init__(self, api: Api | None = None) -> None:
         super().__init__()
         self.api = api or Api()
+        # Порт берём ИЗ адреса клиента, а не из константы: пульт может
+        # подключаться к другому экземпляру прокси (--port), и проверка
+        # обязана смотреть на тот же порт, на который ходят запросы.
+        self._port = _port_of(self.api.base)
         self.sid = ""
         self.player_url = ""
         self.subs_index = 0
@@ -175,8 +181,13 @@ class Panel(QWidget):
         row.setContentsMargins(theme.GAP_M, theme.GAP_S, theme.GAP_M, theme.GAP_S)
         row.setSpacing(theme.GAP_S)
 
+        # Логотип в шапке — та же иконка, что у .exe и на панели задач.
+        # Раньше здесь стоял `theme.icon("film")`, то есть схематичная
+        # киноплёнка: у приложения был свой значок на кнопке в панели задач и
+        # чужой — в собственном окне. Один бренд должен выглядеть одинаково
+        # везде, где его видит человек.
         icon_label = QLabel()
-        icon_label.setPixmap(theme.icon("film").pixmap(20, 20))
+        icon_label.setPixmap(theme.brand_icon(20).pixmap(20, 20))
         icon_label.setFixedSize(20, 20)
         row.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignVCenter)
 
@@ -556,6 +567,17 @@ class Panel(QWidget):
         self.btn_journal_copy.setFixedSize(32, 32)
         self.btn_journal_copy.setToolTip("Скопировать журнал целиком")
         head.addWidget(self.btn_journal_copy)
+
+        # Отчёт об ошибке: версия, пути, состояние порта, системный прокси и
+        # хвост журнала. Нужен именно тогда, когда журнал пуст и спросить
+        # больше нечего. Отдельная кнопка, потому что это другой текст:
+        # журнал — история событий, отчёт — снимок «что вообще происходит».
+        self.btn_report = QPushButton()
+        self.btn_report.setObjectName("ghost")
+        self.btn_report.setIcon(theme.icon("help", 18))
+        self.btn_report.setFixedSize(32, 32)
+        self.btn_report.setToolTip("Скопировать отчёт об ошибке (окружение, порт, журнал)")
+        head.addWidget(self.btn_report)
         layout.addLayout(head)
 
         self.journal = QPlainTextEdit()
@@ -578,6 +600,7 @@ class Panel(QWidget):
         self.btn_journal_copy.clicked.connect(
             lambda: QApplication.clipboard().setText(self.journal.toPlainText())
         )
+        self.btn_report.clicked.connect(self._copy_report)
         self.btn_norm_toggle.toggled.connect(self.norm_box.setVisible)
         self.history_ready.connect(self._fill_history)
         self.history_list.itemClicked.connect(self._history_clicked)
@@ -603,6 +626,8 @@ class Panel(QWidget):
         self.state_arrived.connect(self._apply_state)
         self.sources_arrived.connect(self._fill_sources)
         self.journal_arrived.connect(self._append_journal)
+        self.local_line.connect(self._append_local)
+        self.report_ready.connect(self._report_arrived)
         self.error_text.connect(self._on_error)
         self.loudness_arrived.connect(self.norm_value.setText)
         self.episode_ready.connect(self._after_episode)
@@ -1039,21 +1064,83 @@ class Panel(QWidget):
     # ------------------------------------------------------------------
     #                          источники и журнал
     # ------------------------------------------------------------------
+    def _local(self, kind: str, text: str) -> None:
+        """Записать строку в журнал из САМОГО пульта, не спрашивая сервер.
+
+        Зачем: раньше пульт только ЧИТАЛ журнал через `/diag`, а писал в него
+        лишь сервер. Если сервер не поднялся (порт занят, упал на старте,
+        прокси перехватил localhost) — читать было нечего, и вкладка
+        «Журнал» оставалась пустой. Человек видел «прокси: выключен», пустой
+        журнал и не имел ни одной зацепки.
+
+        Теперь каждая неудача самого пульта оставляет строку и в памяти окна,
+        и в файле журнала (`diagnostics.log`), поэтому отчёт можно собрать
+        даже при полностью мёртвом сервере.
+        """
+        entry = diagnostics.log(kind, text)
+        self.local_line.emit(entry.line())
+
+    def _copy_report(self) -> None:
+        """Собрать отчёт об ошибке и положить в буфер обмена.
+
+        Собирается в фоновом потоке: `diag_report.report()` делает реальный
+        запрос к серверу (до 3 с) и ждёт сокет — в главном потоке это
+        подвесило бы окно. Готовый текст приходит сигналом и копируется уже
+        в потоке интерфейса, как того требует Qt.
+        """
+        self._set_remote_status("собираю отчёт…")
+        port = self._port
+
+        def worker() -> None:
+            try:
+                text = diag_report.report(port)
+            except Exception as exc:
+                text = f"отчёт не собрался: {type(exc).__name__}: {exc}"
+            self.report_ready.emit(text)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _report_arrived(self, text: str) -> None:
+        """Отчёт готов: в буфер, в журнал окна и подтверждение в строке статуса."""
+        QApplication.clipboard().setText(text)
+        self._append_local("--- отчёт об ошибке скопирован ---")
+        self._append_local(text)
+        self._set_remote_status("отчёт скопирован — вставьте его в чат")
+
+    def _append_local(self, line: str) -> None:
+        """Дописать строку в конец окна журнала — только из главного потока."""
+        if not line:
+            return
+        self.journal.appendPlainText(line)
+        bar = self.journal.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
     def _check_proxy(self) -> None:
         self._badge("warn")
         self.badge.setText("прокси: проверяю…")
+        port = self._port
+        self._local("info", f"проверка прокси на порту {port}")
 
         def worker() -> None:
-            if self.api.alive():
+            alive = self.api.alive()
+            if alive:
                 self.badge.setText("прокси: работает")
                 self.badge.setProperty("state", "ok")
                 self.badge.style().unpolish(self.badge)
                 self.badge.style().polish(self.badge)
+                self._local("info", f"прокси отвечает на порту {port}")
             else:
                 self.badge.setText("прокси: выключен")
                 self.badge.setProperty("state", "error")
                 self.badge.style().unpolish(self.badge)
                 self.badge.style().polish(self.badge)
+                # Причина, а не просто «выключен»: занят порт или никто не
+                # слушает — это два разных действия для человека.
+                self._local(
+                    "err",
+                    f"прокси не отвечает на порту {port}: {diag_report.port_state(port)}; "
+                    f"проверка: {diag_report.probe(port)}",
+                )
             # Источники и журнал грузим В ЛЮБОМ СЛУЧАЕ. Раньше они висели
             # внутри ветки «alive() == True»: одна неудачная проверка — и
             # вкладка «Источники» оставалась пустой навсегда, хотя прокси мог
@@ -1068,7 +1155,11 @@ class Panel(QWidget):
         def worker() -> None:
             try:
                 self.sources_arrived.emit(self.api.sources())
-            except ApiError:
+            except ApiError as exc:
+                # Раньше здесь молча отдавался пустой список, и вкладка
+                # «Источники» просто оставалась пустой — без причины и без
+                # единой строки в журнале. Теперь причина видна.
+                self._local("err", f"источники не загрузились: {exc}")
                 self.sources_arrived.emit([])
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1092,8 +1183,15 @@ class Panel(QWidget):
 
     def _load_journal(self) -> None:
         def worker() -> None:
-            with contextlib.suppress(ApiError):
-                self.journal_arrived.emit(self.api.journal(400))
+            try:
+                text = self.api.journal(400)
+            except ApiError as exc:
+                self._local("err", f"журнал сервера недоступен: {exc}")
+                return
+            if not text.strip():
+                self._local("info", "журнал сервера пуст — записей ещё не было")
+                return
+            self.journal_arrived.emit(text)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1224,6 +1322,16 @@ def _supported_preview() -> str:
     if len(names) <= SHORT_LIST:
         return ", ".join(names)
     return ", ".join(names[:4]) + f" и ещё {len(names) - 4}"
+
+
+def _port_of(base_url: str) -> int:
+    """Порт из адреса прокси — для диагностики и текста ошибок."""
+    from urllib.parse import urlsplit  # noqa: PLC0415
+
+    try:
+        return urlsplit(base_url).port or 9001
+    except ValueError:
+        return 9001
 
 
 def _mmss(seconds: float) -> str:
