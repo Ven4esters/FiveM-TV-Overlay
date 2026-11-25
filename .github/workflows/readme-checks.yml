@@ -1,0 +1,52 @@
+name: README checks
+
+on:
+  push:
+    paths: ["**.md", "docs/images/**"]
+  pull_request:
+    paths: ["**.md", "docs/images/**"]
+  schedule:
+    # Раз в неделю: внешние ссылки протухают сами, без наших коммитов.
+    - cron: "0 6 * * 1"
+
+jobs:
+  links:
+    name: Ссылки и пути
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ссылки в Markdown
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --verbose --no-progress --accept 200,206,429 README.md README.en.md docs/images/README.md
+          fail: true
+
+      - name: Только наши файлы — относительные пути
+        run: |
+          # Внешние ссылки «флапают»: сайт может лежать минуту. Свои файлы — нет,
+          # и именно они ломаются при переименовании, поэтому проверяем строго.
+          python3 - <<'PY'
+          import re, pathlib, sys
+          bad = []
+          for name in ("README.md", "README.en.md"):
+              text = pathlib.Path(name).read_text(encoding="utf-8")
+              for ref in re.findall(r'(?:src="|\]\()([^")#][^")]*\.(?:png|svg|gif|md))', text):
+                  if ref.startswith("http"):
+                      continue
+                  if not pathlib.Path(ref).exists():
+                      bad.append(f"{name}: нет файла {ref}")
+          print("\n".join(bad) if bad else "все относительные пути живые")
+          sys.exit(1 if bad else 0)
+          PY
+
+  lint:
+    name: Линт Markdown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: markdownlint
+        uses: DavidAnson/markdownlint-cli2-action@v17
+        with:
+          globs: "README.md README.en.md docs/images/README.md"
+          config: .markdownlint.json
