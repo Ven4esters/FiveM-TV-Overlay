@@ -104,7 +104,7 @@ class Panel(QWidget):
         self._tabs_built = False
 
         self.setWindowTitle(f"{APP_NAME} {__version__}")
-        self.setWindowIcon(theme.icon("film"))
+        self.setWindowIcon(theme.app_icon())
         # Размеры. Раньше задан был только минимум по ширине, и окно
         # «прыгало»: список недавних фиксирует высоту по числу записей,
         # подсказка об ошибке просит высоту под текст, а журнал тянется за

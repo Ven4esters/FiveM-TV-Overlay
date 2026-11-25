@@ -23,7 +23,13 @@ datas = [
     (str(PKG / "web" / "static" / "hls.min.js"), "tvhost2/web/static"),
     (str(PKG / "ui" / "assets" / "style.qss"), "tvhost2/ui/assets"),
     (str(PKG / "ui" / "assets" / "icons"), "tvhost2/ui/assets/icons"),
+    (str(PKG / "ui" / "assets" / "app.ico"), "tvhost2/ui/assets"),
 ]
+
+# Иконка самого .exe: её видят в проводнике, на панели задач и в диспетчере
+# задач. Без неё Windows рисует стандартный «пустой» значок, даже если окно
+# приложения своё имеет.
+ICON = str(PKG / "ui" / "assets" / "app.ico")
 
 # Пакеты, которые PyInstaller не видит из импортов: они подгружаются
 # по имени (плагины Qt, движки yt-dlp) и без этого не попадают в сборку.
@@ -84,6 +90,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,          # UPX ломает Qt: экономия 20 МБ не стоит падений
+    icon=ICON,          # значок .exe в проводнике и на панели задач
     console=False,      # оконное приложение; журнал — во вкладке «Журнал»
     disable_windowed_traceback=False,
     argv_emulation=False,

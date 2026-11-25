@@ -194,9 +194,15 @@ dependency install needed on the user's machine — download and run.
 build.bat
 ```
 
-The script does everything: checks Python and its bitness, installs dependencies
-and PyInstaller, cleans the previous build, builds the .exe and computes the
-checksums. A build takes **3–10 minutes**, most of it the first PyInstaller run.
+The script does everything: checks Python and its bitness, creates a **separate
+`build-venv/` environment**, installs dependencies and PyInstaller into it,
+cleans the previous build, builds the .exe and computes the checksums. A build
+takes **3–10 minutes**, most of it the first PyInstaller run.
+
+**`build-venv/` is independent of `.venv/`.** The app may never have been run
+through `start.bat` — the build does not care: it creates its own environment
+from scratch. The reverse holds too: `start.bat` never touches `build-venv/`, so
+either can be deleted without breaking the other. The folder is in `.gitignore`.
 
 **Result** in the `dist/` folder:
 
@@ -206,20 +212,27 @@ checksums. A build takes **3–10 minutes**, most of it the first PyInstaller ru
 | `FiveM-Video-Overlay.exe.md5` | MD5 checksum |
 | `FiveM-Video-Overlay.exe.sha256` | SHA-256 checksum |
 
-**Build requirements:** Python 3.10+ (ideally the same `.venv` `start.bat`
-creates), a 64-bit system, about 1 GB of free space during the build. Windows is
-the only supported platform for the `.exe`.
+**Build requirements:** Python 3.10+ (64-bit) from python.org with "Add
+python.exe to PATH"; `start.bat` is not needed for the build. A 64-bit system and
+about 1 GB of free space during the build (the build environment is ~400 MB).
+Windows is the only supported platform for the `.exe`.
 
 <details>
 <summary>What is inside the build and why</summary>
 
 - The configuration lives in `tvhost.spec` rather than in a dozen command-line
-  flags: the project has three data sets (the player page with `hls.min.js`, the
-  `style.qss` stylesheet, the icon folder), and flags are easy to lose.
+  flags: the project has several data sets (the player page with `hls.min.js`,
+  the `style.qss` stylesheet, the icon folder, `app.ico`), and flags are easy to
+  lose.
 - The build is **onefile**: a single file that unpacks into a temporary folder on
   start. Everything the program must remember between runs is therefore written
   next to the `.exe`, not into the unpack folder — the split lives in
   `src/tvhost2/core/resources.py`.
+- **The icon is `src/tvhost2/ui/assets/app.ico`**, the same one as the logo in
+  this README. It holds nine sizes (16-256), so Windows never stretches it: 16 is
+  used on the taskbar, 256 for large icons in Explorer. The same file is set on
+  the app window (`theme.app_icon()`), so the title-bar icon and the `.exe` icon
+  match and do not flicker when switching windows.
 - UPX is off: it saves ~20 MB but breaks Qt, and the resulting crashes get
   searched for in the code.
 - Unused Qt modules (WebEngine, Multimedia, Quick) are excluded: without that the
@@ -416,7 +429,7 @@ Layer rules and ways to contribute are in `CONTRIBUTING.md` (Russian).
 ## Tests
 
 ```bash
-python -m pytest                                  # 488 tests
+python -m pytest                                  # 493 tests
 python -m pytest -m "not browser and not network" # fast run without live sites
 ruff check src tests tools                        # linter
 mypy src                                          # types

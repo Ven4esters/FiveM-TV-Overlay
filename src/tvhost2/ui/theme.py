@@ -15,6 +15,7 @@ ASSETS = resources.resource("ui", "assets")
 """Иконки и style.qss. В .exe — распакованная копия (resources.py)."""
 ICONS = ASSETS / "icons"
 QSS = ASSETS / "style.qss"
+APP_ICON = ASSETS / "app.ico"
 
 # Сетка 8 px: все отступы и высоты от этих чисел.
 GAP_XS = 4
@@ -61,6 +62,19 @@ def stylesheet() -> str:
     except OSError:
         return ""
     return text.replace("@ICONS@", str(ICONS).replace("\\", "/"))
+
+
+def app_icon() -> QIcon:
+    """Значок приложения: тот же, что у .exe и на логотипе в README.
+
+    Один .ico на все размеры: Windows берёт из него нужный сама — 16 для
+    панели задач, 256 для крупных значков в проводнике.
+    """
+    if APP_ICON.is_file():
+        result = QIcon(str(APP_ICON))
+        if not result.isNull():
+            return result
+    return icon("film")
 
 
 def icon(name: str, size: int = 20) -> QIcon:

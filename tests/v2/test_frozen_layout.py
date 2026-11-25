@@ -94,5 +94,36 @@ class TestBuildSpec:
     def test_spec_bundles_datas(self) -> None:
         spec = Path(__file__).resolve().parents[2] / "tvhost.spec"
         text = spec.read_text(encoding="utf-8")
-        for needed in ("hls.min.js", "style.qss", "icons"):
+        for needed in ("hls.min.js", "style.qss", "icons", "app.ico"):
             assert needed in text, f"{needed} не попадает в сборку"
+
+    def test_spec_sets_exe_icon(self) -> None:
+        """Без icon= у .exe пустой значок Windows, и заметить это можно
+        только после сборки — то есть через десять минут."""
+        spec = Path(__file__).resolve().parents[2] / "tvhost.spec"
+        text = spec.read_text(encoding="utf-8")
+        assert "icon=ICON" in text, "в EXE() не передан icon="
+        assert (
+            Path(__file__).resolve().parents[2] / "src" / "tvhost2" / "ui" / "assets" / "app.ico"
+        ).is_file(), "app.ico пропал из репозитория"
+
+    def test_app_ico_has_all_sizes(self) -> None:
+        """Windows берёт из .ico нужный размер: без 16 значок на панели задач
+        размывается, без 256 — выглядит пустым в проводнике.
+
+        Файл читается напрямую, без импорта theme: PySide6 в тестах сборки
+        не нужен, а падение импорта Qt не должно выглядеть поломкой иконки.
+        """
+        ico = Path(__file__).resolve().parents[2] / "src" / "tvhost2" / "ui" / "assets" / "app.ico"
+        assert ico.is_file(), "app.ico пропал из репозитория"
+        raw = ico.read_bytes()
+        # Заголовок .ico: reserved(2) type(2) count(2), затем count записей по 16 байт
+        assert raw[:2] == b"\x00\x00" and raw[2:4] == b"\x01\x00", "это не .ico"
+        count = int.from_bytes(raw[4:6], "little")
+        sizes = set()
+        for i in range(count):
+            entry = raw[6 + i * 16 : 6 + (i + 1) * 16]
+            w = entry[0] or 256
+            sizes.add(w)
+        for needed in (16, 32, 48, 256):
+            assert needed in sizes, f"в .ico нет размера {needed}: {sorted(sizes)}"
