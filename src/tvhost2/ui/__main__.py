@@ -25,7 +25,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from .. import __version__
-from ..core import diagnostics, resources
+from ..core import diagnostics, resources, startup
 from . import theme
 from .api import Api
 from .panel import Panel
@@ -82,11 +82,14 @@ def main(argv: list[str] | None = None) -> int:
     # Журнал и отметка запуска — ДО всего остального. Если программа упадёт
     # при создании QApplication или при поднятии сервера, в файле останется
     # след: иначе человек видит «ничего не произошло» и пустой журнал.
-    diagnostics.mark_start()
-    diagnostics.log(
-        "boot",
+    # `ensure_streams` — по той же причине: в сборке `console=False` потоки
+    # равны None, и любой чужой код, пишущий в stderr, падает (подробности
+    # в `core/startup.py`; из-за этого .exe вообще не отвечал на запросы).
+    replaced = startup.ensure_streams()
+    startup.mark_startup(
         f"пульт {__version__}: порт {args.port}, --serve={'да' if args.serve else 'нет'}, "
-        f"сборка={'да' if resources.FROZEN else 'нет'}",
+        f"сборка={'да' if resources.FROZEN else 'нет'}"
+        + (f", без потоков: {', '.join(replaced)}" if replaced else "")
     )
 
     # Фильтр ставится ДО QApplication: иначе первые же сообщения Qt

@@ -117,6 +117,51 @@ class OverlayHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"
     proxy_base = "http://127.0.0.1:9001"
 
+    def log_message(self, format: str, *args: object) -> None:
+        """Не писать строку запроса в stderr — в сборке его НЕТ.
+
+        Это не косметика, а причина, по которой .exe вообще не отвечал.
+        Цепочка такая:
+
+            send_response()  →  log_request()  →  log_message()
+                             →  sys.stderr.write(...)
+
+        В сборке PyInstaller с `console=False` у процесса нет консоли, и
+        `sys.stderr` там **None**. Значит `sys.stderr.write` — это
+        `AttributeError: 'NoneType' object has no attribute 'write'`, причём
+        возникает он ВНУТРИ `send_response`, то есть до отправки заголовков.
+        Клиент видит «Remote end closed connection without response», а
+        сервер при этом жив и порт слушает — ровно то, что показывал отчёт
+        (порт слушает, ответа нет).
+
+        Заодно решается вторая проблема: `ThreadingHTTPServer` печатает
+        трейсбеки в тот же отсутствующий stderr, поэтому сбой был невидим.
+
+        Запросы к серверу пишутся в собственный журнал (`diagnostics`), им
+        этого вывода и достаточно: подробный лог каждого запроса в окне
+        «Журнал» только мешал бы.
+        """
+
+    def handle_one_request(self) -> None:
+        """Любая ошибка разбора запроса попадает в журнал, а не в небытие.
+
+        Штатный `handle_one_request` печатает трейсбек через
+        `socketserver`, а тот пишет в `sys.stderr`. В сборке его нет —
+        и сбой обработчика исчезал бесследно. Здесь трейсбек уходит в
+        журнал, поэтому причина видна и в окне, и в файле рядом с .exe.
+        """
+        try:
+            super().handle_one_request()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True  # клиент ушёл — не ошибка
+        except Exception as exc:
+            log.exception("сбой при разборе запроса")
+            diag.log(
+                "err",
+                f"сбой при разборе запроса: {type(exc).__name__}: {exc}",
+            )
+            self.close_connection = True
+
     # ---------------- утилиты ответов ----------------
     def _send(self, status: int, body: bytes, ctype: str, cache: str = "no-store") -> None:
         try:

@@ -17,45 +17,22 @@ attempted relative import with no known parent package.
 from __future__ import annotations
 
 import sys
-import traceback
-from types import TracebackType
 
 # Импорт на верхнем уровне, а не внутри main(): так PyInstaller гарантированно
 # видит пакет при анализе зависимостей. При ленивом импорте (внутри функции)
 # скрытый импорт пришлось бы дублировать в hiddenimports spec.
-from tvhost2.core import diagnostics
+from tvhost2.core import startup
 from tvhost2.ui.__main__ import main as panel_main
-
-
-def _install_crash_log() -> None:
-    """Записать в журнал ЛЮБОЕ необработанное исключение перед выходом.
-
-    Зачем: сборка идёт с `console=False`, окна консоли нет. Необработанное
-    исключение PyInstaller показывает лишь иногда и в модальном окне,
-    которое человек закрывает не читая. Итог — «программа не запускается»,
-    а журнал пуст.
-
-    Обработчик пишет трейсбек в файл журнала (рядом с .exe) и только затем
-    отдаёт управление стандартному обработчику — то есть поведение не
-    меняется, но след остаётся.
-    """
-
-    def hook(kind: type[BaseException], value: BaseException, tb: TracebackType | None) -> None:
-        try:
-            text = "".join(traceback.format_exception(kind, value, tb))
-            for line in text.strip().splitlines()[-15:]:
-                diagnostics.log("err", f"падение: {line}")
-            diagnostics.log("err", f"журнал: {diagnostics.JOURNAL.path}")
-        except Exception:
-            diagnostics.log("err", "обработчик падений не смог записать трейсбек")
-        sys.__excepthook__(kind, value, tb)
-
-    sys.excepthook = hook
 
 
 def main() -> int:
     """Запуск пульта. В сборке --serve включён по умолчанию."""
-    _install_crash_log()
+    # Порядок важен и не переставляется:
+    # 1) потоки — иначе первый же ответ сервера упадёт на отсутствии stderr;
+    # 2) перехват падений — чтобы ошибка ниже попала в журнал;
+    # 3) сам пульт.
+    startup.ensure_streams()
+    startup.install_crash_log()
     return panel_main()
 
 

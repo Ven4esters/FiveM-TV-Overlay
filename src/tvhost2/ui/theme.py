@@ -42,7 +42,11 @@ def silence_style_warnings() -> None:
     def handler(_mode: object, _context: object, message: str) -> None:
         if "Could not parse" in message and "stylesheet" in message:
             return  # это не ошибка стилей, а шум парсера
-        sys.stderr.write(message + "\n")
+        # В сборке `console=False` потока нет вовсе (`sys.stderr is None`):
+        # писать некуда, а падать из-за сообщения Qt нельзя.
+        stream = sys.stderr
+        if stream is not None:
+            stream.write(message + "\n")
 
     qInstallMessageHandler(handler)
 

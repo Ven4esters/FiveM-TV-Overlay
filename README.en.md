@@ -486,6 +486,44 @@ mark: a trimmed link will not open.
 </details>
 
 <details>
+<summary>The port is listening but nothing answers (Remote end closed connection)</summary>
+
+Before **2.1.3** this was a build bug, not your network: a `.exe` built with
+`console=False` has no console, so `sys.stderr` is `None`, and the very first
+server response crashed inside `send_response` — before the headers were sent.
+The port was still listening, so the report said `port — listening` while
+requests were dropped.
+
+What it looked like in the report:
+
+```
+port: 127.0.0.1:9001 — listening
+probe: no answer: Remote end closed connection without response
+```
+
+**The fix is to update to 2.1.3.** The `version:` line in the error report
+tells you which build you have.
+</details>
+
+<details>
+<summary>The .exe says "proxy: off" and the Sources tab is empty</summary>
+
+Before **2.1.1** this was a panel bug: it honoured the system proxy, so a
+request to its own server went to a foreign `127.0.0.1:7890` (Clash, Nekoray,
+v2rayN, a VPN client). Since 2.1.1 the panel talks to itself directly.
+
+If the badge is still wrong:
+
+1. **Read the status line.** `port 9001 is busy — proxy not started in this
+   window` means another program holds the port.
+2. **Most likely a second instance is running.** Open
+   `http://127.0.0.1:9001/` in a browser. If you see
+   `{"app": "FiveM Video Overlay"}`, the proxy is alive — close the extra window.
+3. **Press "Error report"** on the Journal tab — it shows port state, the real
+   server answer and the system proxy in one place.
+</details>
+
+<details>
 <summary>Port 9001 is taken</summary>
 
 Since 2.1.1 the panel no longer dies silently: the window opens and the
