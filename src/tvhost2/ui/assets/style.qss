@@ -542,6 +542,19 @@ QScrollArea#noteScroll > QWidget > QWidget {
     background: transparent;
 }
 
+/* Прокрутка вкладки «Пульт». Фон прозрачный по той же причине, что и у
+   noteScroll: иначе Qt рисует внутри светлую системную подложку, и карточки
+   висят на белом прямоугольнике. Полоса прокрутки узкая — она не должна
+   отбирать ширину у карточек. */
+QScrollArea#remoteScroll {
+    background: transparent;
+    border: none;
+}
+
+QScrollArea#remoteScroll > QWidget > QWidget {
+    background: transparent;
+}
+
 QWidget#infoText, QLabel#infoText {
     background: transparent;
     color: #D6DAE6;

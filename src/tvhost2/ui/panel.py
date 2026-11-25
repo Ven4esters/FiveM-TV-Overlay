@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSlider,
     QTableWidget,
     QTableWidgetItem,
@@ -87,7 +88,9 @@ class Panel(QWidget):
         # Порт берём ИЗ адреса клиента, а не из константы: пульт может
         # подключаться к другому экземпляру прокси (--port), и проверка
         # обязана смотреть на тот же порт, на который ходят запросы.
-        self._port = _port_of(self.api.base)
+        # `base` может отсутствовать у подмены в тестах — тогда порт по
+        # умолчанию, а не падение на старте окна.
+        self._port = _port_of(getattr(self.api, "base", ""))
         self.sid = ""
         self.player_url = ""
         self.subs_index = 0
@@ -211,8 +214,23 @@ class Panel(QWidget):
 
     # ---------------------------- пульт ----------------------------
     def _build_remote_tab(self) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
+        """Пульт внутри прокручиваемой области.
+
+        Почему прокрутка, а не «просто влезет»: карточек четыре (ссылка,
+        недавние, адрес для игры, управление), и после первого открытия
+        видео появляется карточка «Недавние» — её раньше не было. Сумма
+        высот переставала влезать в окно, а `addStretch` в конце не давал
+        виджетам сжаться по-хорошему: Qt давил их НИЖЕ минимальных высот,
+        и кнопка «Открыть на ТВ» наезжала на поле ввода, а селектор
+        качества — на время справа. Замерено: зазор поля и кнопки был
+        +9 px до открытия и −14 px после.
+
+        С прокруткой содержимое получает ровно свою высоту, а нехватку
+        места забирает полоса прокрутки. Виджеты при этом никогда не
+        опускаются ниже своих минимумов.
+        """
+        content = QWidget()
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(theme.GAP_M, theme.GAP_M, theme.GAP_M, theme.GAP_M)
         layout.setSpacing(theme.GAP_M)
 
@@ -222,6 +240,14 @@ class Panel(QWidget):
         layout.addWidget(self._build_output_block())
         layout.addWidget(self._build_remote_block())
         layout.addStretch(1)
+
+        page = QScrollArea()
+        page.setObjectName("remoteScroll")
+        page.setWidgetResizable(True)
+        page.setFrameShape(QFrame.Shape.NoFrame)
+        page.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        page.setWidget(content)
+        self.remote_scroll = page
         return page
 
     def _build_url_block(self) -> QWidget:
@@ -256,12 +282,16 @@ class Panel(QWidget):
         self.input_url = QLineEdit()
         self.input_url.setPlaceholderText("Вставьте ссылку на видео…")
         self.input_url.setClearButtonEnabled(True)
+        self.input_url.setMinimumHeight(36)
         column.addWidget(self.input_url)
 
         self.btn_open = QPushButton("Открыть на ТВ")
         self.btn_open.setObjectName("primary")
         self.btn_open.setIcon(theme.icon("play", 18))
         self.btn_open.setToolTip("Разобрать ссылку и получить адрес для телевизора")
+        # Минимум по высоте: без него Qt при нехватке места давит кнопку
+        # и она наезжает на поле ввода (видно на скриншоте 2.1.4).
+        self.btn_open.setMinimumHeight(40)
         column.addWidget(self.btn_open)
         return box
 
@@ -309,6 +339,13 @@ class Panel(QWidget):
         # в QSS меняются, и список обрезал записи.
         self.history_list.setSizeAdjustPolicy(QAbstractItemView.SizeAdjustPolicy.AdjustToContents)
         self.history_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # По горизонтали прокрутки НЕТ: полоса появлялась и перекрывала
+        # нижнюю строку записи (название длинное, а переносить его в списке
+        # нельзя — теряется ритм). Длинное название обрезается многоточием,
+        # полный текст виден в подсказке при наведении.
+        self.history_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.history_list.setWordWrap(False)
+        self.history_list.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.history_list.setSpacing(2)
         column.addWidget(self.history_list)
 
@@ -395,6 +432,9 @@ class Panel(QWidget):
         self.quality_box = QComboBox()
         self.quality_box.setToolTip("Качество видео")
         self.quality_box.setMinimumWidth(120)
+        # Минимум по высоте: при сжатии селектор «Авто» перекрывал время
+        # справа — правый край уходил за пределы строки.
+        self.quality_box.setMinimumHeight(32)
         head.addWidget(self.quality_box, 0, Qt.AlignmentFlag.AlignVCenter)
         column.addLayout(head)
 
@@ -406,12 +446,14 @@ class Panel(QWidget):
         self.label_pos = QLabel("0:00")
         self.label_pos.setObjectName("mono")
         self.label_pos.setMinimumWidth(48)
+        self.label_pos.setMinimumHeight(20)
         self.seek = QSlider(Qt.Orientation.Horizontal)
         self.seek.setRange(0, 1000)
         self.seek.setToolTip("Перемотка")
         self.label_dur = QLabel("0:00")
         self.label_dur.setObjectName("mono")
         self.label_dur.setMinimumWidth(48)
+        self.label_dur.setMinimumHeight(20)
         seek_row.addWidget(self.label_pos)
         seek_row.addWidget(self.seek, 1)
         seek_row.addWidget(self.label_dur)
@@ -1329,7 +1371,7 @@ def _port_of(base_url: str) -> int:
     from urllib.parse import urlsplit  # noqa: PLC0415
 
     try:
-        return urlsplit(base_url).port or 9001
+        return urlsplit(base_url or "").port or 9001
     except ValueError:
         return 9001
 
