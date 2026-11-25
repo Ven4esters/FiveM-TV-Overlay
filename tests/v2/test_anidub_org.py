@@ -174,10 +174,9 @@ class TestSelection:
     def test_empty_playlist(self):
         assert pick({"items": []}) == {}
 
-    def test_voice_title_studio_and_type(self):
-        assert voice_title({"voiceStudio": "AniLiberty", "voiceType": "Дубляж"}) == (
-            "AniLiberty (Дубляж)"
-        )
+    def test_voice_title_studio_only(self):
+        """Тип рядом со студией не пишем: он меняется от серии к серии."""
+        assert voice_title({"voiceStudio": "AniLiberty", "voiceType": "Дубляж"}) == "AniLiberty"
 
     def test_voice_title_placeholder_uses_type(self):
         """«Неизвестный» — заглушка сайта, а не название студии."""

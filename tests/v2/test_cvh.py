@@ -77,8 +77,21 @@ class TestPick:
 
 
 class TestVoiceTitle:
-    def test_studio_and_type(self) -> None:
-        assert cvh.voice_title({"voiceStudio": "DEEP", "voiceType": "Дубляж"}) == "DEEP (Дубляж)"
+    def test_studio_wins_over_changing_type(self) -> None:
+        """Студия — подпись, тип к ней не добавляется.
+
+        Тип у одной и той же студии меняется от серии к серии (у anidub.org
+        «Дубляж» в первой, «Многоголосый» во второй). Пульт сверяет строку
+        по названию, поэтому подпись обязана быть стабильной — иначе список
+        выглядит «перепутанным», а номер перестаёт находиться.
+        """
+        assert cvh.voice_title({"voiceStudio": "DEEP", "voiceType": "Дубляж"}) == "DEEP"
+
+    def test_same_studio_same_title_across_series(self) -> None:
+        """Одна студия в разных сериях — одна и та же подпись."""
+        first = cvh.voice_title({"voiceStudio": "AniLiberty", "voiceType": "Дубляж"})
+        second = cvh.voice_title({"voiceStudio": "AniLiberty", "voiceType": "Многоголосый"})
+        assert first == second == "AniLiberty"
 
     def test_unknown_studio_shows_type(self) -> None:
         assert (

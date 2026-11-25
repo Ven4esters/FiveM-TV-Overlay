@@ -435,6 +435,11 @@ SCRIPT = """
       case "subs":       setSubtitles(Number(val)); break;
       case "trans":      pickTranslation(Number(val)); break;
       case "restart":    v.currentTime = 0; startPlayback(); break;
+      // Серия/озвучка — это НОВЫЙ поток на стороне прокси, а не дорожка в
+      // плеере: страница обязана перечитать её. Раньше перезагрузку делала
+      // только смена озвучки (`pickTranslation`), а после смены серии
+      // страница продолжала играть старую — жалоба «серии не переключаются».
+      case "reload":     setTimeout(function () { location.reload(); }, 300); break;
       case "fullscreen":
         // Ровно то же, что делает кнопка в самом плеере (`actFull`):
         // Fullscreen API в CEF игры обычно не работает, поэтому «во весь

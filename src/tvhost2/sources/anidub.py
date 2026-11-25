@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import urllib.parse
@@ -94,6 +95,86 @@ def stream_path(html: str) -> str:
     return match.group(1).strip().replace("&amp;", "&") if match else ""
 
 
+def playlist_episodes(html: str) -> list[dict[str, str]]:
+    """Серии из плейлиста плеера (`ladonyvesna…`): подпись, ссылка, ключ.
+
+    Почему отдельный разбор: у этого плеера нет ни JSON-API, ни списка в
+    разметке страницы — серии лежат объектом внутри скрипта:
+
+        {"locale":"ru","hasSeries":true,…,
+         "episodes":[{"link":"/s2/88641d…","key":"0697…","label":"1 серия"}, …]}
+
+    Проверено 25.11.2026 на «Покемон. Горизонты»: 157 серий, и раньше мы
+    отдавали пульту НОЛЬ — жалоба «серии нельзя переключить» на anidub.com.
+    Озвучек у этого плеера нет: одна дорожка на серию.
+    """
+    text = html or ""
+    marker = '"episodes"'
+    at = text.find(marker)
+    if at < 0:
+        return []
+    start = text.rfind("{", 0, at)
+    if start < 0:
+        return []
+    depth = 0
+    end = -1
+    for index in range(start, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                end = index
+                break
+    if end < 0:
+        return []
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        return []
+    episodes = data.get("episodes")
+    if not isinstance(episodes, list):
+        return []
+    result: list[dict[str, str]] = []
+    for item in episodes:
+        if not isinstance(item, dict):
+            continue
+        if not item.get("link"):
+            continue
+        result.append(
+            {
+                "label": str(item.get("label") or ""),
+                "link": str(item.get("link") or ""),
+                "key": str(item.get("key") or ""),
+            }
+        )
+    return result
+
+
+def episode_number(label: str) -> int:
+    """Номер серии из подписи «7 серия» → 7. 0 — номер не разобрали."""
+    match = re.search(r"\d+", label or "")
+    return int(match.group()) if match else 0
+
+
+def pick_episode_url(player: str, episodes: list[dict[str, str]], number: int) -> str:
+    """Адрес плеера с нужной серией — `?episode=N`, как это делает сам сайт.
+
+    Плеер принимает номер параметром и сам подставляет ссылку и ключ серии
+    (проверено: `&episode=3` открывает третью). Поэтому не подменяем `v=`
+    руками — иначе при смене вёрстки мы бы молча ломались.
+    """
+    if not episodes or number <= 0:
+        return player
+    parts = urllib.parse.urlsplit(player)
+    query = [(k, v) for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)]
+    query = [(k, v) for k, v in query if k.lower() != "episode"]
+    query.append(("episode", str(number)))
+    return urllib.parse.urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), parts.fragment)
+    )
+
+
 def parse_master(playlist: str) -> tuple[Quality, ...]:
     """Master-плейлист anivids → качества.
 
@@ -139,7 +220,33 @@ class AnidubSource:
     def matches(self, url: str) -> bool:
         return is_anidub(url)
 
-    def resolve(self, url: str, translation_index: int = 0) -> Stream:  # noqa: ARG002
+    def url_with_episode(self, url: str, number: int) -> str:
+        """Запомнить номер серии в адресе — `?episode=N`, как у Kodik.
+
+        Без этого смена озвучки (повторный разбор) начинала бы с первой
+        серии: источник не знал, какая открыта. У этого сайта озвучек нет,
+        но правило общее — сессия спрашивает метод, не зная имён сайтов.
+        """
+        parts = urllib.parse.urlsplit(url or "")
+        if not parts.netloc:
+            return url
+        params = [
+            (k, v)
+            for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+            if k.lower() != "episode"
+        ]
+        if number > 0:
+            params.append(("episode", str(number)))
+        return urllib.parse.urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(params), parts.fragment)
+        )
+
+    def resolve(
+        self,
+        url: str,
+        translation_index: int = 0,  # noqa: ARG002 — озвучек тут нет, параметр общий
+        episode: int | None = None,
+    ) -> Stream:
         """Ссылка на страницу серии → поток.
 
         Ступени ровно как у сайта: страница → iframe плеера → HTML плеера
@@ -176,6 +283,34 @@ class AnidubSource:
                 state=SourceState.PARTIAL,
             ) from exc
 
+        # Серии: список берём из плейлиста плеера, а нужную открываем
+        # параметром `?episode=N` — ровно так делает сам сайт.
+        episodes = playlist_episodes(player)
+        current_episode = 0
+        if episodes:
+            wanted = int(episode or 0)
+            if wanted <= 0:
+                wanted = episode_number(episodes[0]["label"]) or 1
+            numbers = [episode_number(item["label"]) for item in episodes]
+            if wanted not in numbers:
+                raise SourceFailedError(
+                    self.name,
+                    f"у этого тайтла нет {wanted}-й серии",
+                    fix=f"Доступны серии {min(n for n in numbers if n)}–{max(numbers)}",
+                    state=SourceState.PARTIAL,
+                )
+            current_episode = wanted
+            player = pick_episode_url(embed, episodes, wanted)
+            try:
+                player = fetch(player).text()
+            except FetchError as exc:
+                raise SourceFailedError(
+                    self.name,
+                    f"плеер не открылся на {wanted}-й серии: {exc.reason}",
+                    fix="Пришлите ссылку разработчику",
+                    state=SourceState.PARTIAL,
+                ) from exc
+
         path = stream_path(player)
         if not path:
             raise SourceFailedError(
@@ -208,7 +343,8 @@ class AnidubSource:
         log.info("anidub: %s → %s качеств", url, len(qualities))
         return Stream(
             source=self.name,
-            title=clean_title(page) or "anidub",
+            title=(clean_title(page) or "anidub")
+            + (f" — серия {current_episode}" if current_episode else ""),
             kind=self.kind,
             qualities=qualities,
             # CDN anivids отвечает 403 на ffmpeg-отпечаток: замер громкости
@@ -225,5 +361,17 @@ class AnidubSource:
                 ),
                 "Referer": "https://anidub.com/",
             },
+            # Серии — по общему контракту `Stream.episodes`. Озвучек у этого
+            # плеера нет: одна дорожка на серию, поэтому `audio_tracks` пуст.
+            episodes=tuple(
+                {
+                    "season": "",
+                    "episode": str(episode_number(item["label"])),
+                    "title": item["label"],
+                }
+                for item in episodes
+            ),
+            episode=current_episode,
+            can_switch_episode=len(episodes) > 1,
             state=self.state,
         )

@@ -235,10 +235,15 @@ class Panel(QWidget):
         layout.setSpacing(theme.GAP_M)
 
         layout.addWidget(self._build_url_block())
-        self.history_box = self._build_history_block()
-        layout.addWidget(self.history_box)
         layout.addWidget(self._build_output_block())
         layout.addWidget(self._build_remote_block())
+        # «Недавние» — ПОД пультом, а не над ним. Пульт и ошибки — то, ради
+        # чего окно открывают; история просмотров нужна реже, и сверху она
+        # оттесняла пульт вниз, так что сообщение об ошибке уезжало за
+        # край экрана. Жалоба: «перенесите недавние под пульт, чтобы сразу
+        # видеть ошибки на нём».
+        self.history_box = self._build_history_block()
+        layout.addWidget(self.history_box)
         layout.addStretch(1)
 
         page = QScrollArea()
@@ -888,12 +893,16 @@ class Panel(QWidget):
         threading.Thread(target=worker, daemon=True).start()
 
     def _after_episode(self) -> None:
-        """Серия сменилась: обновить картинку и напомнить про плеер в игре.
+        """Серия сменилась: сказать плееру в игре перезагрузить страницу.
 
-        Страницу плеера в игре надо перезагрузить: это отдельное окно
-        браузера, и само оно про смену серии не узнает.
+        Раньше здесь было «перезагрузите телевизор (F5)» — и это была
+        ошибка: в игре нет ни клавиатуры, ни адресной строки, нажать F5
+        некому. Человек жаловался «серии не переключаются, откидывает на
+        первую»: сервер серию открывал, а страница в CEF продолжала играть
+        старую. Команда `reload` делает это сама.
         """
-        self._set_remote_status("Пульт: серия открыта — перезагрузите телевизор (F5)")
+        self._cmd("reload", 1)
+        self._set_remote_status("Пульт: серия открыта — телевизор перезагружает страницу")
         self._poll_state()
 
     def _fill_qualities(self, qualities: list[str]) -> None:

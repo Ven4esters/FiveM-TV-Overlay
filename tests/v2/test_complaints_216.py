@@ -285,3 +285,139 @@ def test_6_panel_fills_translation_list_idempotently() -> None:
 
     source = __import__("inspect").getsource(panel.Panel._fill_translations)
     assert "current" in source and "if titles != current" in source
+
+
+# ---------------------------------------------------------------------------
+#  2.1.7 (по отчёту на сборке 2.1.6): серия откатывалась, очередь команд
+#  оживала после перезагрузки, «Недавние» над пультом, кэш плейлиста
+# ---------------------------------------------------------------------------
+
+
+def test_217_translation_change_keeps_the_episode() -> None:
+    """Смена озвучки НЕ должна откидывать на первую серию.
+
+    Живой прогон 25.11.2026: у anidub.org серия в адрес не пишется, и
+    `resolver.resolve(session.url, translation_index=...)` без `episode`
+    начинал с первой — с 5-й серии человек падал на 1-ю.
+    """
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(server.OverlayHandler._translation)
+    assert "episode=" in source, "смена озвучки не передаёт номер серии — серия откатится"
+    assert "session.stream.episode" in source
+
+
+def test_217_player_page_clears_the_command_queue() -> None:
+    """Новая загрузка страницы = чистая очередь команд.
+
+    Плеер начинает опрос с `lastSeq = 0`. Без сброса он получал всю прежнюю
+    очередь заново — старые `mute=true` и `pause` снова срабатывали, и видео
+    «само» вставало на паузу и теряло звук.
+    """
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(server.OverlayHandler._player_page)
+    assert "commands.clear()" in source, "после перезагрузки страницы оживут старые команды"
+
+
+def test_217_reload_command_exists_in_the_player() -> None:
+    """Смену серии доводит до плеера команда, а не просьба нажать F5."""
+    html = _html()
+    assert 'case "reload"' in html, "плеер не умеет перезагружать страницу по команде"
+    block = html[html.index('case "reload"') :][:200]
+    assert "location.reload()" in block
+
+
+def test_217_episode_change_asks_the_player_to_reload() -> None:
+    """В игре нет ни клавиатуры, ни адресной строки — F5 нажать некому."""
+    from tvhost2.ui import panel  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(panel.Panel._after_episode)
+    assert '"reload"' in source, "пульт не просит плеер перезагрузить страницу"
+    # Совет «нажмите F5» в игре невыполним: там нет ни клавиатуры, ни
+    # адресной строки. Проверяем, что он не вернулся в код показа статуса.
+    status_lines = [ln for ln in source.splitlines() if "_set_remote_status" in ln]
+    assert status_lines, "статус после смены серии пропал"
+    for line in status_lines:
+        assert "F5" not in line, "совет «нажмите F5» в игре невыполним"
+
+
+def test_217_history_is_below_the_remote() -> None:
+    """«Недавние» — под пультом: ошибки должны быть видны сразу."""
+    from tvhost2.ui import panel  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(panel.Panel._build_remote_tab)
+    order = [
+        source.index(name)
+        for name in (
+            "_build_url_block()",
+            "_build_output_block()",
+            "_build_remote_block()",
+            "_build_history_block()",
+        )
+    ]
+    assert order == sorted(order), "«Недавние» снова оказались выше пульта"
+
+
+def test_217_playlist_cache_can_be_dropped() -> None:
+    """У каждой серии свой набор озвучек — кэш плейлиста обязан сбрасываться."""
+    from tvhost2.core.cache import TTLCache  # noqa: PLC0415
+
+    cache: TTLCache[int] = TTLCache(limit=4, ttl_s=600)
+    cache.put("anidub.org:abc", 1)
+    assert cache.get("anidub.org:abc") == 1
+    cache.drop("anidub.org:abc")
+    assert cache.get("anidub.org:abc") is None
+
+
+def test_217_cvh_exposes_playlist_reset() -> None:
+    from tvhost2.sources import cvh  # noqa: PLC0415
+
+    assert "drop_playlist" in cvh.__all__
+
+
+def test_217_anidub_com_reads_episodes_from_the_player() -> None:
+    """У anidub.com серии лежат объектом в скрипте плеера, а не в разметке.
+
+    Живая проверка 25.11.2026: у «Покемон. Горизонты» 157 серий, а источник
+    отдавал пульту ноль — «серии нельзя переключить».
+    """
+    from tvhost2.sources import anidub  # noqa: PLC0415
+
+    payload = (
+        '<script>var cfg = {"locale":"ru","hasSeries":true,'
+        '"episodes":[{"link":"/s2/aaa","key":"k1","label":"1 серия"},'
+        '{"link":"/s2/bbb","key":"k2","label":"3 серия"}]};</script>'
+    )
+    episodes = anidub.playlist_episodes(payload)
+    assert len(episodes) == 2
+    assert episodes[1]["label"] == "3 серия"
+    assert anidub.episode_number("3 серия") == 3
+
+
+def test_217_anidub_com_episode_goes_into_the_player_url() -> None:
+    """Номер серии — параметром `?episode=N`, как это делает сам сайт."""
+    from tvhost2.sources import anidub  # noqa: PLC0415
+
+    player = "https://player26.example/index.php?v=/s2/aaa&playlist"
+    got = anidub.pick_episode_url(player, [{"label": "1 серия", "link": "/s2/aaa", "key": "k"}], 7)
+    assert "episode=7" in got
+    assert "playlist" in got, "playlist потерялся — плеер не покажет серии"
+    assert got.count("episode=") == 1
+
+
+def test_217_anidub_com_missing_episode_is_an_honest_refusal() -> None:
+    """Номера, которого нет в списке, нельзя открывать молча как другой."""
+    from tvhost2.sources import anidub  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(anidub.AnidubSource.resolve)
+    assert "нет {wanted}-й серии" in source
+
+
+def test_217_idle_client_disconnect_is_not_logged_as_a_failure() -> None:
+    """Уход клиента (WinError 10053) — не сбой сервера."""
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = __import__("inspect").getsource(server)
+    marker = "except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)"
+    assert marker in source, "журнал снова будет краснеть на каждом закрытии вкладки"

@@ -152,8 +152,15 @@ class OverlayHandler(BaseHTTPRequestHandler):
         """
         try:
             super().handle_one_request()
-        except (BrokenPipeError, ConnectionResetError):
-            self.close_connection = True  # клиент ушёл — не ошибка
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            # Клиент ушёл — это НЕ сбой сервера. На Windows то же самое
+            # приходит как `ConnectionAbortedError` (WinError 10053) и
+            # раньше писалось в журнал как «сбой при разборе запроса»:
+            # страница плеера перезагружается (смена серии, озвучки) или
+            # просто закрывается вкладка — и в журнале появлялась красная
+            # ошибка там, где всё в порядке. Журнал на таких случаях
+            # молчит, а настоящие отказы видны по-прежнему.
+            self.close_connection = True
         except Exception as exc:
             log.exception("сбой при разборе запроса")
             diag.log(
@@ -401,6 +408,16 @@ class OverlayHandler(BaseHTTPRequestHandler):
                 "text/html; charset=utf-8",
             )
             return
+        # Новая загрузка страницы = чистая доска для команд. Плеер в игре
+        # начинает опрос с нуля (`lastSeq = 0`), и БЕЗ сброса он получал всю
+        # очередь заново — включая старые `mute=true` и `pause`, из-за
+        # которых видео «само вставало на паузу» и «теряло звук» после
+        # каждого F5 и после смены серии. Команда, отправленная ПОСЛЕ
+        # отдачи страницы, доедет как обычно: очередь наполняется уже поверх
+        # пустой.
+        runtime = STATE.runtime_for(sid)
+        with runtime.lock:
+            runtime.commands.clear()
         page = player_page.render(
             session, self.proxy_base, f"{self.proxy_base}/static/{HLS_JS_NAME}"
         )
@@ -505,8 +522,19 @@ class OverlayHandler(BaseHTTPRequestHandler):
         if not tracks or not (0 <= index < len(tracks)):
             return self._json(400, {"error": "нет такой озвучки"})
         session.translation_index = index
+        # Номер серии ОБЯЗАТЕЛЕН при повторном разборе. Без него источник
+        # начинает с первой серии: у anidub.org серия в адрес не пишется
+        # (`url_with_episode` у него нет), и после смены озвучки человек
+        # оказывался на 1-й серии — жалоба «серии нельзя переключить,
+        # откидывает на первую». Kodik спасал тем, что хранит номер в
+        # `?episode=` самой ссылки.
+        current_episode = session.stream.episode if session.stream else 0
         try:
-            resolved = resolver.resolve(session.url, translation_index=index)
+            resolved = resolver.resolve(
+                session.url,
+                translation_index=index,
+                episode=current_episode or None,
+            )
         except resolver.ResolveError as exc:
             return self._json(200, {"ok": False, "reason": exc.message})
         session.stream = resolved.stream
