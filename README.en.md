@@ -411,8 +411,7 @@ flowchart LR
   master playlist, because the CDN serves relative ones) and the player page.
 - **`ui/`** — the PySide6 panel. No business logic: display and HTTP API calls only.
 
-Design notes live in `README_OVERLAY.md` (Russian); layer rules are in
-`CONTRIBUTING.md` (Russian).
+Layer rules and ways to contribute are in `CONTRIBUTING.md` (Russian).
 
 ## Tests
 
@@ -442,6 +441,13 @@ Honestly about what is missing:
 - **There is no downloading.** The project plays streams; it does not build a library.
 - **Windows is the primary path.** `start.bat` targets it; the server and panel are
   cross-platform, but on Linux they are tested in CI rather than in the game.
+- **The panel is a regular Windows window, not an injected overlay.** It stays on
+  top ("Always On Top"), but in exclusive fullscreen windows may lose focus, so
+  play in **Borderless** mode. A true in-game overlay without pausing the game is
+  only possible as a server-side FiveM resource.
+- **GTA Online is no place for third-party software.** The project never injects
+  into the game and never reads its memory, yet Rockstar's rules are wary of any
+  third-party tool. Use it in single player (Story Mode).
 
 ## FAQ
 
@@ -475,6 +481,34 @@ the firewall. The server listens on `0.0.0.0` by default.
 ffmpeg is required. Check
 `python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())"`; if no
 path is printed, reinstall the dependency: `pip install imageio-ffmpeg`.
+</details>
+
+<details>
+<summary>Video does not play — how to send a report</summary>
+
+The **Journal** tab is the first place to look. Press the copy button next to the
+"Journal" caption: the clipboard gets the whole journal, including an environment
+snapshot (Python, yt-dlp, ffmpeg, paths).
+
+What to look at first:
+
+| Tag | Meaning |
+|---|---|
+| `req` | request passed, status 2xx/3xx |
+| `ОШИБКА` | CDN refused or a connection dropped — with code and text |
+| `ИГРА` | error reported by the TV browser (hls.js) |
+| `boot` | the page opened in the TV: its User-Agent, whether hls.js loaded |
+| `new` | how many seconds the link took to prepare |
+
+- **`boot` present, no errors** — the page opened but the video did not start.
+  If the line says `hls=НЕ загружен`, the TV could not fetch `/static/hls.min.js`.
+- **No `boot` at all** — the TV never reached the server: wrong IP in the link,
+  another network, or the Windows firewall.
+- **`CDN не отдал плейлист … code=403/404`** — the link is stale or the CDN
+  blocks the IP. Take a fresh link from the panel.
+- **`fragLoadErrorTimeOut`** — the network cannot carry the bitrate: pick 360p
+  instead of "Auto".
+
 </details>
 
 <details>
