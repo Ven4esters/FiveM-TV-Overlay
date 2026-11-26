@@ -97,8 +97,47 @@ imageio_ffmpeg` проходит). То есть **пакет** в сборке 
 `ruff check .` в CI честно ругался на них как на исходники. `.tmp/` и
 `build-venv/` теперь в `.gitignore`, а из репозитория удалены.
 
-Все правки в `.github/workflows/` проверяются запуском, а не на глаз: Windows-сборка
-уже отработала один раз и подтвердила, что `.exe` собирается на настоящей Windows.
+## 6. Подтверждено на настоящей Windows
+
+Не на глаз и не «должно работать»: файл собран на `windows-latest` и запущен.
+
+```
+exe: dist\FiveM-Video-Overlay.exe bytes=87881261
+entries in bundle: 254
+ffmpeg entries in bundle: ['imageio_ffmpeg\\binaries\\README.md',
+                           'imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v9.0.2.exe']
+OK: ffmpeg binary is inside the exe
+
+SELFTEST ffmpeg=C:\Users\RUNNER~1\AppData\Local\Temp\_MEI0000270c2\imageio_ffmpeg\binaries\ffmpeg-win-x86_64-v9.0.2.exe
+SELFTEST version=9.0.2-essentials_build-www.gyan.dev
+SELFTEST frozen=True
+OK: ffmpeg is inside the build and resolved
+```
+
+То есть ffmpeg не просто лежит внутри, а **находится и запускается** самим
+кодом программы в распакованной папке `_MEI…` — ровно там, где раньше
+поиск молча возвращал «нет».
+
+Что ещё попутно вскрылось при этих прогонах:
+
+- `timeout /t` в cmd падает с «Input redirection is not supported» — поэтому
+  проверка идёт через `--selftest`, без ожиданий и без HTTP;
+- приложение в CI не поднимается вовсе (нет рабочего стола, неполные
+  Qt-плагины), так что проверка через `/diag/ffmpeg` мерила бы наличие Qt.
+  Маршрут оставлен для людей: на машине с экраном он отвечает сразу.
+
+## 7. Как проверить у себя
+
+Запустить и открыть в браузере `http://127.0.0.1:9001/diag/ffmpeg`:
+
+```json
+{"found": true, "frozen": true, "exists": true, "runs": true,
+ "path": "C:\\...\\_MEI...\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v9.0.2.exe"}
+```
+
+`found: false` — ffmpeg действительно нет в сборке (тогда смело присылайте
+тот же ответ). `found: true, runs: false` — файл есть, но не запускается:
+обычно антивирус или битая загрузка.
 
 ---
 
