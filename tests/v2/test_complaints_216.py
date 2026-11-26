@@ -850,8 +850,11 @@ def test_221_hls_timeouts_cover_a_slow_cdn() -> None:
     Отсюда `fragLoadTimeOut` при `t=0.0`: видео не начиналось ни разу.
     """
     html = _html()
-    for setting in ("fragLoadingTimeOut: 60000", "manifestLoadingTimeOut: 30000",
-                    "levelLoadingTimeOut: 30000"):
+    for setting in (
+        "fragLoadingTimeOut: 60000",
+        "manifestLoadingTimeOut: 30000",
+        "levelLoadingTimeOut: 30000",
+    ):
         assert setting in html, f"нет настройки {setting}"
 
 

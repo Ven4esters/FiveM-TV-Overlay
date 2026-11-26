@@ -343,9 +343,7 @@ class AnidubSource:
                 # списку, и вместо понятного отказа вылетал голый ValueError
                 # «источник не смог разобрать ссылку» — жалоба на 2.1.7.
                 known = sorted(number for number in numbers if number > 0)
-                where = (
-                    f"Доступны серии {known[0]}–{known[-1]}" if known else "список серий пуст"
-                )
+                where = f"Доступны серии {known[0]}–{known[-1]}" if known else "список серий пуст"
                 raise SourceFailedError(
                     self.name,
                     f"у этого тайтла нет {wanted}-й серии",

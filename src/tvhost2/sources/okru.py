@@ -46,7 +46,6 @@ USER_AGENT = (
 """Отпечаток клиента для okcdn. Проверено: без него подпись не принимается."""
 
 
-
 class OkRuSource(YtDlpSource):
     name = "OK.ru"
     hosts = (

@@ -821,9 +821,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
         # не в сбое, а в том, что на этой серии такой студии просто нет.
         missing = ""
         if wanted_title and got_title and got_title != wanted_title:
-            missing = (
-                f"на этой серии нет озвучки «{wanted_title}» — включена «{got_title}»"
-            )
+            missing = f"на этой серии нет озвучки «{wanted_title}» — включена «{got_title}»"
         STATE.runtime_for(sid).commands.clear()
         # Озвучка — часть просмотра: «Ван-Пис в дубляже» и «в субтитрах»
         # это разные записи, к каждой хочется вернуться своей.

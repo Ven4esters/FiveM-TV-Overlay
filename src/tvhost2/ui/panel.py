@@ -1584,9 +1584,7 @@ class Panel(QWidget):
         """
         self._set_remote_status(text, force=True)
 
-    def _set_remote_status(
-        self, text: str, force: bool = False, sticky_ms: int = 0
-    ) -> None:
+    def _set_remote_status(self, text: str, force: bool = False, sticky_ms: int = 0) -> None:
         """Строка статуса. Пока висит отказ, обычные сообщения не затирают его.
 
         `force=True` — для самого отказа и для явной очистки: иначе статус

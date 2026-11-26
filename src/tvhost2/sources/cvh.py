@@ -448,9 +448,7 @@ def build_stream(
     # с серии на серию — в журнале заказчика «в заголовке всегда 1 серия»
     # (у yani.tv и подобных поток менялся, а подпись — нет).
     title = str(playlist.get("titleName") or base_title or site)
-    if title.endswith(f"— серия {current_episode}") or title.endswith(
-        f"— {current_episode} серия"
-    ):
+    if title.endswith(f"— серия {current_episode}") or title.endswith(f"— {current_episode} серия"):
         title = title.rsplit("—", 1)[0].strip()
     log.info(
         "%s: %s → серия %s, %s, %s варианта",
