@@ -98,8 +98,38 @@ class SegmentCache:
 
     def __init__(self) -> None:
         self._items: OrderedDict[str, tuple[bytes, str, str]] = OrderedDict()
+        self._loading: set[str] = set()
+        """Что качается прямо сейчас: второй запрос ждёт, а не дублирует."""
         self._lock = threading.Lock()
         self._size = 0
+
+    def has(self, key: str) -> bool:
+        """Есть ли кусок в памяти — дёшево, без копирования."""
+        with self._lock:
+            return key in self._items
+
+    def busy(self, key: str) -> bool:
+        """Этот кусок уже качается другим запросом?
+
+        Зачем: hls.js при `fragLoadTimeOut` повторяет ТОТ ЖЕ адрес. Если
+        первый запрос ещё в пути, второй не должен идти к CDN заново — он
+        встанет в очередь и получит готовое. Иначе два одинаковых запроса
+        конкурируют за канал, и оба упираются в таймаут.
+        """
+        with self._lock:
+            return key in self._loading
+
+    def claim(self, key: str) -> bool:
+        """Занять кусок под загрузку. False — уже занят."""
+        with self._lock:
+            if key in self._loading:
+                return False
+            self._loading.add(key)
+            return True
+
+    def release(self, key: str) -> None:
+        with self._lock:
+            self._loading.discard(key)
 
     def get(self, key: str) -> tuple[bytes, str, str] | None:
         with self._lock:
@@ -155,6 +185,45 @@ class AppState:
 
 
 STATE = AppState()
+
+
+def _track_title(stream: object, index: int) -> str:
+    """Название дорожки по индексу — пустая строка, если такой нет."""
+    tracks = getattr(stream, "audio_tracks", ()) or ()
+    if 0 <= index < len(tracks):
+        return str(tracks[index].get("title") or "").strip()
+    return ""
+
+
+def _keep_translation(session: Any, url: str, number: int, resolved: Any) -> Any:
+    """Открыть ту же СТУДИЮ, что человек выбрал, а не ту же строку списка.
+
+    Зачем: у anidub.org состав озвучек РАЗНЫЙ на разных сериях. На 1-й и
+    27-й их четыре («AniLiberty», «Субтитры», «Amedia», «Неизвестный»), а на
+    500-й — три, и «AniLiberty» там нет вовсе; на 1180-й список снова
+    другой. Индекс, который пульт помнил, на новой серии указывает на
+    чужого актёра или вылетает за пределы — «нет такой озвучки».
+
+    Ищем по названию. Не нашли — оставляем то, что дал источник, но пульту
+    сообщаем правду (он и так подтянет новое имя из /state).
+    """
+    wanted = str(getattr(session, "translation_wanted", "") or "").strip()
+    if not wanted:
+        return resolved
+    stream = getattr(resolved, "stream", None)
+    tracks = getattr(stream, "audio_tracks", ()) or ()
+    titles = [str(t.get("title") or "").strip() for t in tracks]
+    if wanted in titles:
+        found = titles.index(wanted)
+        if found == session.translation_index:
+            return resolved  # уже та, что нужно
+        try:
+            again = resolver.resolve(url, translation_index=found, episode=number)
+        except resolver.ResolveError:
+            return resolved
+        session.translation_index = found
+        return again
+    return resolved
 
 
 class OverlayHandler(BaseHTTPRequestHandler):
@@ -464,6 +533,17 @@ class OverlayHandler(BaseHTTPRequestHandler):
                 "title": session.title,
                 "translations": [t.get("title", "") for t in resolved.stream.audio_tracks],
                 "translation": session.translation_title,
+                # Серии — сразу, а не только в /state. Раньше ответ содержал
+                # лишь озвучки, и до первого опроса (800 мс, а на медленном
+                # разборе дольше) поле серии оставалось пустым: человек
+                # видел серую подсказку «серия» и считал её значением.
+                "episodes": [
+                    str(e.get("title") or e.get("episode") or "")
+                    for e in (resolved.stream.episodes or ())
+                ],
+                "episode": resolved.stream.episode or 0,
+                "episodeSeason": resolved.stream.episode_season or 0,
+                "canSwitchEpisode": bool(resolved.stream.can_switch_episode),
                 "warning": "",
             },
         )
@@ -610,6 +690,13 @@ class OverlayHandler(BaseHTTPRequestHandler):
         tracks = session.stream.audio_tracks if session.stream else ()
         if not tracks or not (0 <= index < len(tracks)):
             return self._json(400, {"error": "нет такой озвучки"})
+        # Какую озвучку человек выбрал — ЗАПОМИНАЕМ ПО НАЗВАНИЮ, а не по
+        # номеру строки. У anidub.org состав списка разный от серии к серии
+        # (на 500-й «AniLiberty» нет вовсе, на 1180-й — сплошь другие
+        # студии), и индекс «3» на новой серии означает уже другую студию.
+        # Отсюда «нет такой озвучки» при переключении: индекс выходил за
+        # пределы укоротившегося списка.
+        wanted_title = str(tracks[index].get("title") or "").strip()
         session.translation_index = index
         diag.log(
             "ui",
@@ -633,6 +720,10 @@ class OverlayHandler(BaseHTTPRequestHandler):
         except resolver.ResolveError as exc:
             return self._json(200, {"ok": False, "reason": exc.message})
         session.stream = resolved.stream
+        # Название могло смениться (у источника порядок другой) — держим в
+        # сессии то, что реально включилось, чтобы следующая серия
+        # открывалась той же студией.
+        session.translation_wanted = wanted_title
         STATE.runtime_for(sid).commands.clear()
         # Озвучка — часть просмотра: «Ван-Пис в дубляже» и «в субтитрах»
         # это разные записи, к каждой хочется вернуться своей.
@@ -687,6 +778,11 @@ class OverlayHandler(BaseHTTPRequestHandler):
             )
         url = session.episode_url(number)
         diag.log("ui", f"[{sid}] запрос серии {number}: разбираю {url[:90]}")
+        # Ту же СТУДИЮ, что человек выбрал, а не тот же номер строки. У
+        # anidub.org состав озвучек разный от серии к серии, и после
+        # переключения номера индекс указывал уже на другого актёра или
+        # вылетал за пределы списка — отсюда «нет такой озвучки» и не та
+        # озвучка после смены серии.
         try:
             resolved = resolver.resolve(
                 url, translation_index=session.translation_index, episode=number
@@ -694,6 +790,9 @@ class OverlayHandler(BaseHTTPRequestHandler):
         except resolver.ResolveError as exc:
             diag.log("err", f"[{sid}] серия {number} не открылась: {exc.message}")
             return self._json(200, {"ok": False, "reason": exc.message})
+        # Если просили конкретную студию, а после разбора список стал
+        # другим — доискиваем её по названию и, найдя, разбираем заново.
+        resolved = _keep_translation(session, url, number, resolved)
         session.url = url
         session.stream = resolved.stream
         session.title = resolved.stream.title

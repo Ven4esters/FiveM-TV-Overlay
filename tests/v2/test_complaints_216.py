@@ -773,3 +773,92 @@ def test_220_bridge_serves_segments_from_memory() -> None:
     source = inspect.getsource(server.OverlayHandler._bridge)
     assert "STATE.segments.get(" in source
     assert "STATE.segments.put(" in source
+
+
+# ---------------------------------------------------------------------------
+#  2.2.1 (отчёт на 2.2.0): поле серии пустое, Kodik не стартует, озвучка
+#  «нет такой» после смены серии, таймауты сегментов
+# ---------------------------------------------------------------------------
+
+
+def test_221_new_answer_carries_the_episode_list() -> None:
+    """`/new` обязан отдавать серии сразу, а не только через опрос.
+
+    Иначе между открытием и первым `/state` (800 мс, на медленном разборе
+    дольше) поле серии стояло пустым, и человек читал в нём серую подсказку
+    «серия», принимая её за значение.
+    """
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = inspect.getsource(server.OverlayHandler._create_session)
+    for key in ('"episodes"', '"episode"', '"canSwitchEpisode"'):
+        assert key in source, f"в ответе /new нет {key}"
+
+
+def test_221_empty_episode_box_is_never_shown() -> None:
+    """Пустое поле серии не показываем: это «ещё не пришло», а не «нет серий»."""
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.ui import panel  # noqa: PLC0415
+
+    source = inspect.getsource(panel.Panel._fill_episodes)
+    assert "has_rows = self.episode_box.count() > 0" in source
+    assert "setVisible(bool(can) and has_rows)" in source
+
+
+def test_221_episode_box_is_wide_enough() -> None:
+    """«Выбор серии маленький и без числа» — поле сжималось по тексту."""
+    from tvhost2.ui import panel as panel_mod  # noqa: PLC0415
+
+    window = _panel()
+    assert window.episode_box.minimumWidth() >= 132
+    assert panel_mod is not None
+
+
+def test_221_translation_is_found_by_title_not_index() -> None:
+    """Студию ищем по названию: состав списка у anidub.org разный по сериям.
+
+    На 1-й и 27-й серии четыре озвучки, на 500-й — три и «AniLiberty» нет
+    вовсе. Индекс «0» там означает уже другого актёра, а «3» вылетает за
+    пределы списка — отсюда «нет такой озвучки» при переключении.
+    """
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = inspect.getsource(server._keep_translation)
+    assert "translation_wanted" in source
+    assert "titles.index(wanted)" in source
+
+
+def test_221_session_remembers_the_translation_name() -> None:
+    from tvhost2.web.session import Session  # noqa: PLC0415
+
+    session = Session(sid="x", url="u")
+    assert session.translation_wanted == ""
+
+
+def test_221_hls_timeouts_cover_a_slow_cdn() -> None:
+    """Замер: первый сегмент Kodik идёт 5.3 с, штатный таймаут меньше.
+
+    Отсюда `fragLoadTimeOut` при `t=0.0`: видео не начиналось ни разу.
+    """
+    html = _html()
+    for setting in ("fragLoadingTimeOut: 60000", "manifestLoadingTimeOut: 30000",
+                    "levelLoadingTimeOut: 30000"):
+        assert setting in html, f"нет настройки {setting}"
+
+
+def test_221_segment_cache_can_claim_a_slot() -> None:
+    """Один сегмент не должен качаться дважды одновременно."""
+    from tvhost2.web.server import SegmentCache  # noqa: PLC0415
+
+    cache = SegmentCache()
+    assert cache.claim("k") is True
+    assert cache.claim("k") is False, "второй запрос должен ждать, а не дублировать"
+    assert cache.busy("k") is True
+    cache.release("k")
+    assert cache.busy("k") is False
+    assert cache.claim("k") is True

@@ -565,6 +565,15 @@ class Panel(QWidget):
         self.translation_box = self._make_pick("Озвучка")
         picks.addWidget(self.translation_box, 1)
         self.episode_box = self._make_pick("Серия")
+        # Ширина — по самому длинному разумному значению, а не по текущему.
+        # Жалоба «выбор серии вновь маленький и без числа»: при подписи
+        # «1 серия» поле сжималось до ширины текста, и номер в нём было
+        # почти не разглядеть. У сериала бывает и «1 сезон · 1180 серия».
+        self.episode_box.setMinimumWidth(132)
+        self.episode_box.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.episode_box.setMinimumContentsLength(14)
         picks.addWidget(self.episode_box, 0)
         return picks
 
@@ -951,7 +960,13 @@ class Panel(QWidget):
                 self.episode_box.blockSignals(False)
             season = str(data.get("episodeSeason") or "").strip()
             self.episode_box.setToolTip(f"{season} сезон · серия" if season else "Серия")
-        self.episode_box.setVisible(bool(can))
+        # Поле серии НИКОГДА не показываем пустым. Пустое поле — это не
+        # «серий нет», а «список ещё не пришёл», и человек читает в нём
+        # серую подсказку «серия», считая её значением. Жалоба «пульт не
+        # показывает серию, только надпись СЕРИЯ» — ровно про этот случай:
+        # сервер ответил `canSwitchEpisode: true`, а строк ещё не было.
+        has_rows = self.episode_box.count() > 0
+        self.episode_box.setVisible(bool(can) and has_rows)
 
     def _episode_picked(self, index: int) -> None:
         """Выбрали серию: просим сервер разобрать её и открыть заново.

@@ -397,7 +397,26 @@ SCRIPT = """
         // У эфира — держимся живого края: 3 сегмента отставания, а не
         // «догнать любой ценой» (рывками картинка хуже, чем отставание).
         liveDurationInfinity: LIVE,
-        maxLiveSyncPlaybackRate: LIVE ? 1.5 : 1
+        maxLiveSyncPlaybackRate: LIVE ? 1.5 : 1,
+        // ТАЙМАУТЫ. Замерено 26.11.2026 на Kodik: первый запрос сегмента с
+        // CDN solodcdn идёт 5.3 с (повторный — из памяти прокси, 0.0 с).
+        // Штатный таймаут hls.js меньше, поэтому плеер объявлял
+        // `fragLoadTimeOut` и сдавался, даже не дав CDN ответить: в журнале
+        // заказчика это сплошные таймауты при `t=0.0` — видео не началось
+        // ни разу. Даём сети время и повторяем сами.
+        manifestLoadingTimeOut: 30000,
+        levelLoadingTimeOut: 30000,
+        fragLoadingTimeOut: 60000,
+        manifestLoadingMaxRetry: 4,
+        levelLoadingMaxRetry: 4,
+        fragLoadingMaxRetry: 6,
+        // Пауза между повторами растёт, но не бесконечно: 0.5→4 с.
+        manifestLoadingRetryDelay: 700,
+        levelLoadingRetryDelay: 700,
+        fragLoadingRetryDelay: 700,
+        manifestLoadingMaxRetryTimeout: 8000,
+        levelLoadingMaxRetryTimeout: 8000,
+        fragLoadingMaxRetryTimeout: 12000
       });
       hls.loadSource(src);
       hls.attachMedia(v);
