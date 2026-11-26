@@ -13,6 +13,10 @@ on:
       - "tvhost.spec"
       - "src/tvhost2/core/ffmpeg_bin.py"
       - "requirements*.txt"
+      # Скрипты проверки — часть этой же сборки: изменился проверяющий
+      # скрипт, значит проверить надо заново.
+      - "tools/check_exe_built.py"
+      - "tools/check_ffmpeg_diag.py"
       - ".github/workflows/windows-build.yml"
   workflow_dispatch:
 
