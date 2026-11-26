@@ -557,6 +557,14 @@ class OverlayHandler(BaseHTTPRequestHandler):
     def _route_post(  # noqa: PLR0911 — плоский список маршрутов читается лучше
         self, path: str, query: dict[str, list[str]]
     ) -> None:
+        # Создание сессии: README обещает POST /new?url=..., и внешний клиент
+        # вправе им пользоваться. До этой правки POST /new отвечал 404 —
+        # работал только GET, потому что сам пульт ходит GET-ом, и ошибка
+        # не проявлялась ни в тестах, ни в интерфейсе. Нашлось живой
+        # проверкой: curl -X POST /new → «нет маршрута /new».
+        if path.rstrip("/") == "/new":
+            self._create_session(query)
+            return
         if path.startswith("/control/"):
             self._control(path[len("/control/") :].strip("/"), query)
             return

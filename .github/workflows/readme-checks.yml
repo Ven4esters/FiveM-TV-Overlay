@@ -125,6 +125,14 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      - name: Маршруты HTTP API в README совпадают с кодом
+        # README обещал `GET /commands/<sid>`, а сервер отвечает на `/cmd/<sid>`:
+        # человек, писавший свой пульт по документации, получал 404. Глазами
+        # это не держится — проверено, что расходились 7 маршрутов из 23.
+        # tools/check_api_docs.py импортирует только стандартную библиотеку,
+        # поэтому зависимостей не требует.
+        run: python tools/check_api_docs.py
+
       - name: В README нет незакрытых details
         run: |
           python - <<'PY'

@@ -16,7 +16,7 @@
   <a href="https://github.com/Ven4esters/FiveM-TV-Overlay/actions/workflows/ci.yml"><img alt="CI: build status" src="https://img.shields.io/github/actions/workflow/status/Ven4esters/FiveM-TV-Overlay/ci.yml?branch=main&label=CI"></a>
   <a href="README.md"><img alt="Language: Russian and English" src="https://img.shields.io/badge/lang-русский_%7C_English-4A32A0"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-A8600F"></a>
-  <img alt="Version: 2.2.4" src="https://img.shields.io/badge/version-2.2.4-1C1A22">
+  <img alt="Version: 2.2.5" src="https://img.shields.io/badge/version-2.2.5-1C1A22">
   <img alt="Python: 3.10 or newer" src="https://img.shields.io/badge/python-3.10%2B-3776AB">
 </p>
 
@@ -352,16 +352,28 @@ another program. All responses are JSON.
 | Method and path | Purpose |
 |---|---|
 | `GET /` | Application name and version |
+| `GET /index.html` | Same as `/` (default page address) |
 | `GET /sessions` | What is running now: `sid`, title, source |
 | `GET /sources` | Sources and their state (`ok` / `partial`) with notes |
 | `GET /history` | Recent items |
 | `GET /state/<sid>` | Player state: time, pause, quality, dub |
 | `GET /player/<sid>` | Player page for the game client |
-| `POST /new?url=<link>` | Create a session: link → stream. Returns `sid` |
-| `POST /control/<sid>?cmd=pause` | Player commands — see the table below |
-| `GET /commands/<sid>?since=<seq>` | Commands queued after `seq` (how the game learns about presses) |
+| `GET /cmd/<sid>?since=<seq>` | Commands queued after `seq` (how the game learns about presses) |
+| `GET /stream/<sid>` | Session master playlist through the bridge |
+| `GET /subs/<sid>?name=<file>` | Session subtitles |
+| `GET /loudness/<sid>` | Loudness measurement (shown in the panel) |
+| `GET /hls?u=<url>` | Bridge to the source CDN: playlist or segment |
+| `GET /static/<file>` | Player page static files |
 | `GET /diag` | Work log |
 | `GET /diag/ffmpeg` | What the app sees about ffmpeg: path, version, whether it runs |
+| `POST /new?url=<link>` | Create a session: link → stream. Returns `sid` |
+| `POST /control/<sid>?cmd=pause` | Player commands — see the table below |
+| `POST /trans/<sid>?index=<number>` | Switch the dub |
+| `POST /episode/<sid>?index=<number>` | Jump to an episode (only where the source has them) |
+| `POST /history/forget?url=<link>` | Drop a video from Recent |
+| `POST /close/<sid>` | Close the session |
+| `POST /trace/<sid>` | The player notes in the log that it received a command |
+| `POST /report/<sid>` | The player reports its state (twice a second) |
 
 `cmd` values for `/control/<sid>`. The argument goes in `value`:
 
@@ -616,5 +628,5 @@ Released under the **MIT** license. Full text in [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <sub>Version 2.2.4 · distributed under the MIT license</sub>
+  <sub>Version 2.2.5 · distributed under the MIT license</sub>
 </p>

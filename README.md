@@ -16,7 +16,7 @@
   <a href="https://github.com/Ven4esters/FiveM-TV-Overlay/actions/workflows/ci.yml"><img alt="CI: статус сборки" src="https://img.shields.io/github/actions/workflow/status/Ven4esters/FiveM-TV-Overlay/ci.yml?branch=main&label=CI"></a>
   <a href="README.en.md"><img alt="Язык: русский и английский" src="https://img.shields.io/badge/lang-русский_%7C_English-4A32A0"></a>
   <a href="LICENSE"><img alt="Лицензия: MIT" src="https://img.shields.io/badge/license-MIT-A8600F"></a>
-  <img alt="Версия: 2.2.4" src="https://img.shields.io/badge/version-2.2.4-1C1A22">
+  <img alt="Версия: 2.2.5" src="https://img.shields.io/badge/version-2.2.5-1C1A22">
   <img alt="Python: 3.10 и новее" src="https://img.shields.io/badge/python-3.10%2B-3776AB">
 </p>
 
@@ -351,16 +351,28 @@ md5sum -c FiveM-Video-Overlay.exe.md5
 | Метод и путь | Что делает |
 |---|---|
 | `GET /` | Имя и версия приложения |
+| `GET /index.html` | То же, что `/` (адрес по умолчанию) |
 | `GET /sessions` | Что сейчас запущено: `sid`, название, источник |
 | `GET /sources` | Источники и их состояние (`ok` / `partial`) с оговорками |
 | `GET /history` | «Недавние» |
 | `GET /state/<sid>` | Состояние плеера: время, пауза, качество, озвучка |
 | `GET /player/<sid>` | Страница-плеер для игрового клиента |
-| `POST /new?url=<ссылка>` | Создать сессию: ссылка → поток. Вернёт `sid` |
-| `POST /control/<sid>?cmd=pause` | Команды плееру — см. таблицу ниже |
-| `GET /commands/<sid>?since=<seq>` | Команды, накопившиеся после `seq` (так игра узнаёт о нажатиях) |
+| `GET /cmd/<sid>?since=<seq>` | Команды, накопившиеся после `seq` (так игра узнаёт о нажатиях) |
+| `GET /stream/<sid>` | Master-плейлист сессии через мост |
+| `GET /subs/<sid>?name=<файл>` | Субтитры сессии |
+| `GET /loudness/<sid>` | Замер громкости (виден в пульте) |
+| `GET /hls?u=<адрес>` | Мост к CDN источника: плейлист или сегмент |
+| `GET /static/<файл>` | Статика страницы-плеера |
 | `GET /diag` | Журнал работы |
 | `GET /diag/ffmpeg` | Что программа видит про ffmpeg: путь, версию, работает ли |
+| `POST /new?url=<ссылка>` | Создать сессию: ссылка → поток. Вернёт `sid` |
+| `POST /control/<sid>?cmd=pause` | Команды плееру — см. таблицу ниже |
+| `POST /trans/<sid>?index=<номер>` | Сменить озвучку |
+| `POST /episode/<sid>?index=<номер>` | Перейти к серии (только у источников, где они есть) |
+| `POST /history/forget?url=<ссылка>` | Убрать видео из «Недавних» |
+| `POST /close/<sid>` | Закрыть сессию |
+| `POST /trace/<sid>` | Плеер отмечает в журнале, что получил команду |
+| `POST /report/<sid>` | Плеер присылает состояние (дважды в секунду) |
 
 Команды `cmd` для `/control/<sid>`. Значение передаётся в `value`:
 
@@ -616,5 +628,5 @@ ffmpeg идёт вместе с программой: отдельно став�
 ---
 
 <p align="center">
-  <sub>Версия 2.2.4 · распространяется по лицензии MIT</sub>
+  <sub>Версия 2.2.5 · распространяется по лицензии MIT</sub>
 </p>

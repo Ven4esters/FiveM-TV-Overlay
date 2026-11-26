@@ -1237,3 +1237,77 @@ def test_224_network_marker_is_required() -> None:
     """
     text = _ci_text()
     assert "::error::сетевых тестов не найдено" in text
+
+
+# ---------------- 2.2.5: README не врёт про HTTP API ----------------
+# Найдено живой проверкой: README обещал `GET /commands/<sid>`, а сервер
+# отвечает на `/cmd/<sid>`. Человек, писавший свой пульт по документации,
+# получал 404. Расходились 7 маршрутов из 23.
+
+
+def test_225_readme_routes_match_server() -> None:
+    """Список маршрутов в README совпадает с кодом сервера.
+
+    Проверка вынесена в tools/check_api_docs.py, потому что тот же скрипт
+    запускается в CI на файлы документации. Здесь — чтобы расхождение
+    ловилось и локальным прогоном, до пуша.
+    """
+    import subprocess  # noqa: PLC0415
+    import sys  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parents[2]
+    result = subprocess.run(
+        [sys.executable, str(root / "tools" / "check_api_docs.py")],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "маршруты совпадают" in result.stdout
+
+
+def test_225_known_route_names_are_in_readme() -> None:
+    """Конкретные маршруты, которых раньше не было в README.
+
+    Это регресс-защита от возврата: `/commands` вместо `/cmd`, и забытые
+    `trans`, `episode`, `close`, `trace`, `report`, `hls`, `stream`.
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    root = Path(__file__).resolve().parents[2]
+    for name in ("README.md", "README.en.md"):
+        text = (root / name).read_text(encoding="utf-8")
+        for route in (
+            "GET /cmd/<sid>",
+            "POST /trans/<sid>",
+            "POST /episode/<sid>",
+            "POST /close/<sid>",
+            "POST /trace/<sid>",
+            "POST /report/<sid>",
+            "GET /hls",
+            "GET /stream/<sid>",
+        ):
+            assert route in text, f"{name}: нет маршрута {route}"
+        assert "GET /commands/<sid>" not in text, f"{name}: вернулся неверный путь /commands"
+
+
+def test_225_post_new_creates_session_like_readme_says() -> None:
+    """`POST /new` работает: README обещает именно его.
+
+    Живая проверка: `curl -X POST /new?url=...` отвечал «нет маршрута /new» —
+    в `_route_post` этого пути не было вовсе. Пульт ходит GET-ом, поэтому
+    ошибка не проявлялась ни в интерфейсе, ни в тестах; ломался только
+    внешний клиент, который делал так, как написано в документации.
+    """
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = inspect.getsource(server.OverlayHandler._route_post)
+    assert '"/new"' in source, "POST /new не обслуживается"
+    assert "_create_session" in source
+
+    # И GET-путь не сломан: им ходит сам пульт.
+    get_source = inspect.getsource(server.OverlayHandler._route_get)
+    assert '"/new"' in get_source
