@@ -1135,3 +1135,30 @@ def test_2223_check_exe_tool_reads_pyinstaller_archive(tmp_path, monkeypatch) ->
     assert "zipfile" not in source.split('"""')[-1], "zipfile не читает архив PyInstaller"
     # Инструмент не должен падать на отсутствии файла, а объяснять причину.
     assert "not built" in source
+
+
+def test_2223_selftest_reports_ffmpeg_without_qt(monkeypatch) -> None:
+    """`--selftest` отвечает про ffmpeg, не поднимая Qt.
+
+    Проверка .exe в CI не может запускать окно: там нет рабочего стола,
+    и «приложение не ответило» ничего не говорит о ffmpeg. Поэтому режим
+    самопроверки импортирует только `core.ffmpeg_bin`.
+    """
+    import importlib  # noqa: PLC0415
+    import sys as _sys  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    entry = Path(__file__).resolve().parents[2] / "src" / "tvhost2_entry.py"
+    source = entry.read_text(encoding="utf-8")
+    # Самопроверка объявлена ДО импорта интерфейса и не тянет его.
+    selftest_at = source.find("def _selftest")
+    ui_import_at = source.find("from tvhost2.ui")
+    assert selftest_at > 0 and ui_import_at > selftest_at, "импорт Qt раньше самопроверки"
+    assert "core.ffmpeg_bin" in source
+    assert "--selftest" in source
+
+    # И сама функция работает: возвращает 0, когда ffmpeg есть.
+    monkeypatch.setattr(_sys, "argv", ["tvhost2_entry.py", "--selftest"])
+    monkeypatch.syspath_prepend(str(entry.parent))
+    module = importlib.import_module("tvhost2_entry")
+    assert module._selftest() == 0

@@ -54,14 +54,12 @@ jobs:
         run: python tools/check_exe_built.py
         shell: cmd
 
-      - name: Запустить .exe и спросить про ffmpeg
-        run: |
-          REM Приложение оконное (console=False), поэтому печатать в stdout оно
-          REM не умеет. Проверяем не вывод, а факт старта прокси и то, что
-          REM замер громкости не отвечает «нужен ffmpeg».
-          start "" dist\FiveM-Video-Overlay.exe --port 9100
-          timeout /t 25 /nobreak > nul
-          python tools/check_ffmpeg_diag.py
+      - name: ffmpeg внутри .exe — запуск самопроверки сборки
+        # Именно ЗАПУСК собранного файла, а не чтение архива: так проверяется,
+        # что ffmpeg не только лежит внутри, но и находится самим кодом
+        # в распакованной папке. Окно здесь не поднимается (--selftest),
+        # потому что на раннере нет рабочего стола и Qt не стартует.
+        run: python tools/check_ffmpeg_diag.py dist\FiveM-Video-Overlay.exe
         shell: cmd
 
       - uses: actions/upload-artifact@v4
