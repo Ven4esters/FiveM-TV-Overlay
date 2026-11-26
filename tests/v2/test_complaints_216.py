@@ -1162,3 +1162,76 @@ def test_2223_selftest_reports_ffmpeg_without_qt(monkeypatch) -> None:
     monkeypatch.syspath_prepend(str(entry.parent))
     module = importlib.import_module("tvhost2_entry")
     assert module._selftest() == 0
+
+
+# ---------------- 2.2.4: CI-гейты, которые пропускали падения ----------------
+# Жалоба переформулирована как проверка: «гейт, который можно обойти, — не
+# гейт». Здесь закреплено поведение, а не текст workflow.
+
+
+def _ci_text() -> str:
+    from pathlib import Path  # noqa: PLC0415
+
+    return (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_224_tests_step_returns_real_exit_code() -> None:
+    """Падение тестов не должно «переноситься» в шаг, читающий журнал.
+
+    Было: `continue-on-error: true` плюс шаг, искавший в pytest.log строку
+    `N failed`. Проверено на подставных журналах — пропускалось падение
+    порога покрытия («FAIL ... not reached»), `ERROR tests/...` и пустой
+    журнал целиком. Теперь значение имеет код возврата pytest.
+    """
+    # Проверяется СТРУКТУРА workflow, а не текст: упоминание
+    # `continue-on-error` в комментарии — это объяснение, а не поведение.
+    from pathlib import Path  # noqa: PLC0415
+
+    import yaml  # noqa: PLC0415
+
+    wf = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    steps = wf["jobs"]["quality"]["steps"]
+    step = next(s for s in steps if s.get("name") == "Тесты с покрытием")
+    assert not step.get("continue-on-error"), "вернулся обход кода возврата"
+    # pipefail обязателен: без него `| tee` возвращает код tee (0).
+    assert "set -o pipefail" in step["run"]
+    # Гейта по тексту журнала больше нет нигде: он пропускал падение.
+    assert 'grep -qE "[0-9]+ failed"' not in _ci_text()
+
+
+def test_224_coverage_step_checks_report_not_config() -> None:
+    """Шаг порога покрытия читает coverage.xml, а не константу из конфига.
+
+    Было: печать `fail_under` из pyproject.toml — всегда зелёная, ничего не
+    проверяла. Теперь берётся line-rate из отчёта и сравнивается с порогом.
+    """
+    text = _ci_text()
+    start = text.find("Порог покрытия не снижен")
+    assert start > 0
+    block = text[start : text.find("Сборка артефакта", start)]
+    assert "line-rate" in block, "порог проверяется не по отчёту"
+    assert "sys.exit(1)" in block, "шаг не умеет краснеть"
+
+
+def test_224_security_gates_actually_block() -> None:
+    """SCA и SAST не должны быть «предупреждением» с зелёным итогом."""
+    text = _ci_text()
+    assert '|| echo "::warning::' not in text, "найдено условное предупреждение вместо провала"
+    assert "pip-audit --desc" in text
+
+
+def test_224_network_marker_is_required() -> None:
+    """Исчезновение сетевых тестов — ошибка, а не «нечего запускать».
+
+    Код 5 у pytest означает «ничего не выбрано». Раньше он считался нормой,
+    поэтому маркер мог исчезнуть вместе с тестами, и задание «Регресс на
+    реальных источниках» продолжало быть зелёным, ничего не проверяя.
+    """
+    text = _ci_text()
+    assert "::error::сетевых тестов не найдено" in text

@@ -76,39 +76,35 @@ jobs:
         # покрытия. Раньше не было ни playwright в зависимостях, ни этого
         # разделения — pytest.importorskip() молча выбрасывал модуль,
         # покрытие падало с 79% до 69%, и CI краснел по непонятной причине.
-        # tee + continue-on-error: журнал выгружается артефактом, и причину
-        # падения видно без прав на логи Actions. Раньше узнать её было
-        # нечем — страница прогона требует входа, а API отдаёт 403.
+        # Код возврата pytest — настоящий: гейт краснеет, когда упал тест,
+        # не собрался модуль или покрытие ниже порога.
+        #
+        # Раньше здесь стоял `continue-on-error: true`, а вердикт выносил
+        # следующий шаг по ЖУРНАЛУ, искав в нём `N failed`. Проверено на
+        # подставных журналах — такой гейт пропускал три случая из четырёх:
+        #   • «FAIL Required test coverage of 68.0% not reached» — падение
+        #     порога покрытия (слова failed в строке нет);
+        #   • «ERROR tests/...» при неразобранном модуле;
+        #   • пустой журнал целиком.
+        # Строка `1 failed` к тому же исчезает из журнала, когда любой
+        # плагин печатает итог иначе. Гейт, который пропускает падение, —
+        # не гейт, поэтому смотрим на код возврата, а не на текст.
         run: |
           set -o pipefail
           # Сетевые тесты исключены из БЛОКИРУЮЩЕГО прогона: они ходят на
-          # живые сайты, и падение Kodik (он один раз отдал не-JSON) валило
-          # весь мерж. Их гоняет отдельное задание «Регресс на реальных
-          # источниках», где падение сети не блокирует (continue-on-error).
-          pytest -m "not browser and not network" --cov=src/tvhost2 --cov-report=term --cov-report=xml 2>&1 | tee pytest.log
-        continue-on-error: true
+          # живые сайты, и падение Kodik не должно валить мерж. Их гоняет
+          # отдельное задание «Регресс на реальных источниках».
+          pytest -m "not browser and not network" \
+            --cov=src/tvhost2 --cov-report=term --cov-report=xml 2>&1 | tee pytest.log
 
       - name: Журнал тестов
+        # Выгружается и при падении: причину видно без прав на логи Actions.
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pytest-log
           path: pytest.log
           retention-days: 7
-
-      - name: Итог тестов
-        # Падение переносим сюда: шаг выше всегда «успешен», чтобы журнал
-        # успел выгрузиться. Здесь возвращаем настоящий код ошибки.
-        if: always()
-        run: |
-          if grep -qE "[0-9]+ failed" pytest.log; then
-            echo "::error::тесты упали — смотрите артефакт pytest-log"
-            exit 1
-          fi
-          if grep -q "error" pytest.log && ! grep -qE "[0-9]+ passed" pytest.log; then
-            echo "::error::тесты не запустились — смотрите артефакт pytest-log"
-            exit 1
-          fi
 
       - name: Тесты воспроизведения (Chromium)
         env:
@@ -118,10 +114,25 @@ jobs:
         run: pytest -m browser -v
 
       - name: Порог покрытия не снижен
+        # Порог задан fail_under в pyproject.toml, и pytest его уже проверил
+        # (код возврата шага «Тесты с покрытием»). Здесь проверяется ФАКТ из
+        # отчёта, а не константа из конфига: раньше шаг печатал значение
+        # fail_under и всегда был зелёным — то есть не проверял ничего.
         run: |
-          # fail_under задан в pyproject.toml; pytest упадёт сам,
-          # здесь только явное напоминание в логе
-          python -c "import tomllib,pathlib; c=tomllib.loads(pathlib.Path('pyproject.toml').read_text()); print('порог покрытия:', c['tool']['coverage']['report']['fail_under'], '%')"
+          python - <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("coverage.xml").getroot()
+          actual = float(root.get("line-rate") or 0) * 100
+          import tomllib, pathlib
+          cfg = tomllib.loads(pathlib.Path("pyproject.toml").read_text(encoding="utf-8"))
+          need = float(cfg["tool"]["coverage"]["report"]["fail_under"])
+          print(f"покрытие по coverage.xml: {actual:.2f} % (порог {need:.0f} %)")
+          if actual < need:
+              print("::error::покрытие ниже порога")
+              sys.exit(1)
+          PY
 
       - name: Сборка артефакта
         run: |
@@ -147,9 +158,18 @@ jobs:
           ruff check src --select S --ignore S101,S104,S310,S603
 
       - name: SCA — уязвимости зависимостей
+        # Блокирует, а не предупреждает: `|| echo warning` превращал шаг в
+        # зелёный при любом результате — проверка существовала формально.
+        #
+        # Сканируется ОКРУЖЕНИЕ, а не requirements.txt: в requirements.txt
+        # три строки без версий (то, что ставится, определяется резолвером),
+        # а dev-зависимостей там нет вовсе. `pip-audit -r` на таком файле
+        # проверял не то, что установлено.
         run: |
+          python -m pip install --upgrade pip
           pip install pip-audit
-          pip-audit -r requirements.txt --strict || echo "::warning::найдены уязвимости — проверьте отчёт"
+          pip install -e .
+          pip-audit --desc
 
       - name: Secret scanning
         # gitleaks-action требует собственного токена с правами на PR,
@@ -187,5 +207,11 @@ jobs:
           # не сработает — шелл выйдет раньше. Ловим через `|| code=$?`.
           code=0
           python -m pytest tests/ -q -m network || code=$?
-          if [ "$code" -eq 5 ]; then echo "Сетевых тестов нет — пропуск"; exit 0; fi
+          if [ "$code" -eq 5 ]; then
+            # Код 5 = «ничего не выбрано». Раньше это молча считалось нормой,
+            # и маркер мог исчезнуть вместе с тестами — регресс на живых
+            # источниках просто перестал бы существовать.
+            echo "::error::сетевых тестов не найдено, а они должны быть (маркер network)"
+            exit 1
+          fi
           exit $code

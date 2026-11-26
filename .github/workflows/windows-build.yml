@@ -10,9 +10,13 @@ on:
   push:
     branches: [main]
     paths:
+      # ВЕСЬ код, а не один файл поиска ffmpeg: раньше правка любого
+      # другого модуля не пересобирала .exe, и «ffmpeg внутри» мог
+      # сломаться молча — сборка просто не запускалась.
+      - "src/**"
       - "tvhost.spec"
-      - "src/tvhost2/core/ffmpeg_bin.py"
       - "requirements*.txt"
+      - "pyproject.toml"
       # Скрипты проверки — часть этой же сборки: изменился проверяющий
       # скрипт, значит проверить надо заново.
       - "tools/check_exe_built.py"

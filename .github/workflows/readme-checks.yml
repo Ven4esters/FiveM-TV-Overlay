@@ -50,3 +50,94 @@ jobs:
         with:
           globs: "README.md README.en.md docs/images/README.md"
           config: .markdownlint.json
+
+  consistency:
+    name: Версии, якоря и отсутствие заметок разработчика
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Версия в README совпадает с кодом
+        # README врал о версии три релиза подряд: бейдж показывал 2.1.0 при
+        # коде 2.2.3. Проверка машинная, потому что глазами это не держится.
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          version = re.search(
+              r'__version__\s*=\s*"([^"]+)"',
+              pathlib.Path("src/tvhost2/__init__.py").read_text(encoding="utf-8"),
+          ).group(1)
+          bad = []
+          for name in ("README.md", "README.en.md"):
+              text = pathlib.Path(name).read_text(encoding="utf-8")
+              shown = re.findall(r"badge/version-([0-9][^-]*)-", text)
+              footer = re.findall(r"Версия ([0-9][^ ·<]*)|Version ([0-9][^ ·<]*)", text)
+              for value in shown:
+                  if value != version:
+                      bad.append(f"{name}: бейдж {value} ≠ код {version}")
+              for pair in footer:
+                  value = pair[0] or pair[1]
+                  if value and value != version:
+                      bad.append(f"{name}: подпись {value} ≠ код {version}")
+          print("\n".join(bad) if bad else f"версия совпадает: {version}")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: В README нет заметок для разработчика
+        # TODO-блоки вида «заполнить после первой сборки» — записка себе,
+        # а не информация для читателя. Пользователь видит в README пустую
+        # таблицу и решает, что продукт недоделан.
+        run: |
+          if grep -nE "TODO|FIXME|заполним после|fill in after|заполнить после" README.md README.en.md; then
+            echo "::error::в README остались заметки разработчика"
+            exit 1
+          fi
+          echo "заметок разработчика нет"
+
+      - name: Якоря оглавления указывают на существующие заголовки
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          def slug(title: str) -> str:
+              # GitHub: нижний регистр, пунктуация выброшена, пробелы → дефис.
+              out = title.strip().lower()
+              out = re.sub(r"[^\w\s\u0400-\u04FF-]", "", out)
+              return re.sub(r"\s+", "-", out)
+
+          bad = []
+          for name in ("README.md", "README.en.md"):
+              text = pathlib.Path(name).read_text(encoding="utf-8")
+              heads = {slug(m) for m in re.findall(r"^#{2,3} (.+)$", text, re.M)}
+              for anchor in re.findall(r"\]\(#([^)]+)\)", text):
+                  if anchor not in heads:
+                      bad.append(f"{name}: якорь #{anchor} не ведёт никуда")
+          print("\n".join(bad) if bad else "все якоря живые")
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: В README нет незакрытых details
+        run: |
+          python - <<'PY'
+          import pathlib
+          import sys
+
+          bad = []
+          for name in ("README.md", "README.en.md"):
+              text = pathlib.Path(name).read_text(encoding="utf-8")
+              if text.count("<details>") != text.count("</details>"):
+                  bad.append(f"{name}: <details> не закрыты")
+              if text.count("[!NOTE]") + text.count("[!WARNING]") + text.count("[!TIP]") == 0:
+                  bad.append(f"{name}: ни одного алерта — разметка потерялась")
+          print("\n".join(bad) if bad else "разметка в порядке")
+          sys.exit(1 if bad else 0)
+          PY

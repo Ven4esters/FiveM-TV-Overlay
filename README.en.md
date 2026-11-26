@@ -16,7 +16,7 @@
   <a href="https://github.com/Ven4esters/FiveM-TV-Overlay/actions/workflows/ci.yml"><img alt="CI: build status" src="https://img.shields.io/github/actions/workflow/status/Ven4esters/FiveM-TV-Overlay/ci.yml?branch=main&label=CI"></a>
   <a href="README.md"><img alt="Language: Russian and English" src="https://img.shields.io/badge/lang-русский_%7C_English-4A32A0"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-A8600F"></a>
-  <img alt="Version: 2.1.0" src="https://img.shields.io/badge/version-2.1.0-1C1A22">
+  <img alt="Version: 2.2.4" src="https://img.shields.io/badge/version-2.2.4-1C1A22">
   <img alt="Python: 3.10 or newer" src="https://img.shields.io/badge/python-3.10%2B-3776AB">
 </p>
 
@@ -122,9 +122,7 @@ exactly what is missing (tab "Sources"):
 </details>
 
 > [!NOTE]
-> The demo recording (GIF) is not made yet: see the checklist in
-> `docs/images/README.md`. Every image above is a real application screenshot,
-> not a mockup.
+> Every image above is a real application screenshot, not a mock-up.
 
 ## Requirements
 
@@ -268,17 +266,9 @@ the file download in full** (MD5 and SHA-256) and **was it tampered with**
 
 ### Checksums
 
-<!-- TODO(exe): fill in after the first build.bat run.
-     Order: build the .exe, then paste the values from
-     dist\FiveM-Video-Overlay.exe.md5 and .sha256 plus the version name. -->
-
-| Item | Value |
-|---|---|
-| Version | `TODO` — filled after the build |
-| File size | `TODO` — filled after the build |
-| Build date | `TODO` — filled after the build |
-| **MD5** | `TODO` — filled after the build |
-| **SHA-256** | `TODO` — filled after the build |
+Checksums are published with every build, next to the place you downloaded the
+`.exe` from. If there are none, there is nothing to compare against — ask
+whoever handed you the file.
 
 ### How to check it yourself
 
@@ -307,23 +297,7 @@ md5sum -c FiveM-Video-Overlay.exe.md5
 The expected output is `FiveM-Video-Overlay.exe: OK`. Anything else means the file
 downloaded incompletely or was modified: do not run it, download it again.
 
-### VirusTotal check
-
-<!-- TODO(virustotal): fill in after the first build.bat run.
-     Order:
-       1. Build the .exe.
-       2. Upload dist\FiveM-Video-Overlay.exe to https://www.virustotal.com
-          (File tab; you may keep the upload private, but then the report link
-          is useless to readers — publish it).
-       3. Paste the report link and the check date into the table below.
-       4. State how many engines flagged it: an empty cell is more honest than
-          an invented "0/70". -->
-
-| Item | Value |
-|---|---|
-| VirusTotal report link | `TODO` — after the first build |
-| Check date | `TODO` |
-| Result | `TODO` — e.g. `0/72`, or the list of engines that flagged it |
+### If your antivirus complains
 
 <details>
 <summary>Why an unsigned .exe sometimes shows "1–3 detections"</summary>
@@ -387,6 +361,7 @@ another program. All responses are JSON.
 | `POST /control/<sid>?cmd=pause` | Player commands — see the table below |
 | `GET /commands/<sid>?since=<seq>` | Commands queued after `seq` (how the game learns about presses) |
 | `GET /diag` | Work log |
+| `GET /diag/ffmpeg` | What the app sees about ffmpeg: path, version, whether it runs |
 
 `cmd` values for `/control/<sid>`. The argument goes in `value`:
 
@@ -442,7 +417,7 @@ Layer rules and ways to contribute are in `CONTRIBUTING.md` (Russian).
 ## Tests
 
 ```bash
-python -m pytest                                  # 493 tests
+python -m pytest                                  # 634 tests
 python -m pytest -m "not browser and not network" # fast run without live sites
 ruff check src tests tools                        # linter
 mypy src                                          # types
@@ -478,6 +453,26 @@ Honestly about what is missing:
 ## FAQ
 
 <details>
+<summary>"ffmpeg required" — loudness measurement does not work</summary>
+
+ffmpeg ships with the program: you do not install it separately, neither for the
+`.exe` nor when running from source. If the panel still says "ffmpeg required",
+ask the program itself — open `http://127.0.0.1:9001/diag/ffmpeg`:
+
+```json
+{"found": true, "runs": true, "version": "9.0.2-essentials_build",
+ "path": "...\\_MEI...\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v9.0.2.exe"}
+```
+
+- `found: false` — the file is missing from the build: download the `.exe` again.
+- `found: true`, `runs: false` — the file is there but will not start: usually
+  the antivirus blocked it. Add the program folder to the exclusions and check again.
+
+Measurement is optional: without it video still plays, the volume is simply not
+levelled.
+</details>
+
+<details>
 <summary>"Site is not supported" — what to do</summary>
 
 The panel names the site and lists supported ones. If you need a direct file,
@@ -496,7 +491,7 @@ requests were dropped.
 
 What it looked like in the report:
 
-```
+```text
 port: 127.0.0.1:9001 — listening
 probe: no answer: Remote end closed connection without response
 ```
@@ -519,8 +514,10 @@ If the badge is still wrong:
 2. **Most likely a second instance is running.** Open
    `http://127.0.0.1:9001/` in a browser. If you see
    `{"app": "FiveM Video Overlay"}`, the proxy is alive — close the extra window.
+
 3. **Press "Error report"** on the Journal tab — it shows port state, the real
    server answer and the system proxy in one place.
+
 </details>
 
 <details>
@@ -537,8 +534,10 @@ What to check:
 2. **Another program holds the port.** Start on another port:
    `FiveM-Video-Overlay.exe --port 9002`. The panel connects to the same port
    the server listens on, so the in-game link moves to 9002 as well.
+
 3. **Older versions (before 2.1.1)** simply vanished in this situation — the
    `console=False` build has nowhere to print a traceback. Update.
+
 </details>
 
 <details>
@@ -617,5 +616,5 @@ Released under the **MIT** license. Full text in [LICENSE](LICENSE).
 ---
 
 <p align="center">
-  <sub>Version 2.1.0 · only v2.1 is supported; v1 code remains as the <code>v1.0-working</code> tag and is not developed</sub>
+  <sub>Version 2.2.4 · distributed under the MIT license</sub>
 </p>
