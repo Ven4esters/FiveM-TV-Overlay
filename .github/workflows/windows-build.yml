@@ -43,10 +43,11 @@ jobs:
         run: python -m PyInstaller --noconfirm tvhost.spec
 
       - name: Размер собранного .exe
-        # Одной строкой: в cmd переносы внутри `python -c "..."` ломают
-        # разбор и шаг падает ещё до всякой проверки сборки — так и вышло
-        # в первом прогоне (сборка успешна, упала проверка).
-        run: python -c "import os; p=r'dist\FiveM-Video-Overlay.exe'; print('exe:', p, 'есть:', os.path.isfile(p), 'байт:', os.path.getsize(p) if os.path.isfile(p) else 0)"
+        # Проверки — отдельными файлами, а не `python -c` в cmd. Причины,
+        # обе проверены прогонами: переносы строк внутри `-c "..."` ломают
+        # разбор, а русский текст в print падает с UnicodeEncodeError, потому
+        # что консоль Windows здесь в cp1252. Поэтому — скрипт и латиница.
+        run: python tools/check_exe_built.py
         shell: cmd
 
       - name: Запустить .exe и спросить про ffmpeg

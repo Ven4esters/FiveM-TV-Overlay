@@ -1117,3 +1117,21 @@ def test_2223_diag_ffmpeg_route_exists() -> None:
     assert '"/diag/ffmpeg": self._diag_ffmpeg' in source
     assert "def _diag_ffmpeg" in source
     assert '"runs"' in source
+
+
+def test_2223_check_exe_tool_reads_pyinstaller_archive(tmp_path, monkeypatch) -> None:
+    """Проверка сборки читает архив PyInstaller, а не zip.
+
+    Первая версия инструмента использовала `zipfile`, и на собранном .exe он
+    падал с BadZipFile: PyInstaller пишет свой формат (CArchive). Это тест
+    на то, что найденный путь в скрипте верный — иначе Windows-сборка в CI
+    проверяла бы «размер файла» вместо «ffmpeg внутри».
+    """
+    from pathlib import Path  # noqa: PLC0415
+
+    tool = Path(__file__).resolve().parents[2] / "tools" / "check_exe_built.py"
+    source = tool.read_text(encoding="utf-8")
+    assert "CArchiveReader" in source
+    assert "zipfile" not in source.split('"""')[-1], "zipfile не читает архив PyInstaller"
+    # Инструмент не должен падать на отсутствии файла, а объяснять причину.
+    assert "not built" in source
