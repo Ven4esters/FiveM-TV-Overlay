@@ -40,3 +40,34 @@ def qt_widgets():
             allow_module_level=True,
         )
     return QApplication
+
+
+@pytest.fixture(autouse=True)
+def _destroy_widgets_before_exit():
+    """Уничтожать виджеты, пока Qt ещё жив — иначе процесс падает с 139.
+
+    Симптом в CI: все тесты проходят, а после последней строки отчёта процесс
+    получает SIGSEGV; в консоли «QObject: shared QObject was deleted directly.
+    The program is malformed and may crash». Раньше этого не видели: шаг
+    тестов стоял с `continue-on-error`, и код возврата не проверялся. Как
+    только гейт стал честным, дефект проявился сразу.
+
+    Причина: тесты создают `Panel()` и не уничтожают его. Объект остаётся
+    жив до выхода из интерпретатора, и тогда его удаляет уже Python — после
+    того, как внутренние структуры Qt начали разбираться. Порядок получается
+    неверным. Явное удаление сразу после теста даёт предсказуемый порядок.
+    """
+    yield
+    try:
+        from PySide6.QtWidgets import QApplication  # noqa: PLC0415
+
+        app = QApplication.instance()
+        if app is None:
+            return
+        for widget in app.topLevelWidgets():
+            widget.close()
+            widget.deleteLater()
+            widget.setParent(None)
+        app.processEvents()
+    except Exception:  # noqa: S110 — Qt мог не подняться вовсе, гасить нечего
+        pass

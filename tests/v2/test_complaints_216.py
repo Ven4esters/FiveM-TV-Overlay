@@ -1189,7 +1189,9 @@ def test_224_tests_step_returns_real_exit_code() -> None:
     # `continue-on-error` в комментарии — это объяснение, а не поведение.
     from pathlib import Path  # noqa: PLC0415
 
-    import yaml  # noqa: PLC0415
+    # skip, а не падение: без PyYAML проверять структуру нельзя, и это
+    # отсутствие зависимости, а не дефект кода. В CI он стоит (pyproject).
+    yaml = pytest.importorskip("yaml", reason="нужен для разбора workflow")
 
     wf = yaml.safe_load(
         (Path(__file__).resolve().parents[2] / ".github/workflows/ci.yml").read_text(
