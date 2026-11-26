@@ -1039,3 +1039,78 @@ def test_2222_anidub_resolve_passes_playlist_and_link() -> None:
     source = inspect.getsource(anidub.AnidubSource.resolve)
     assert "_with_playlist(embed)" in source
     assert "episode_embed_url(embed, episodes, wanted)" in source
+
+
+# ---------------- 2.2.3: ffmpeg в собранном .exe ----------------
+# Жалоба: «почему не находит ffmpeg, если он в зависимостях и должен идти
+# в компилируемый .exe». В исходниках ffmpeg находился, в .exe — нет.
+
+
+def test_2223_spec_puts_ffmpeg_into_build() -> None:
+    """ffmpeg должен лежать в данных сборки, а не «где-то в site-packages»."""
+    import re  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    spec = Path(__file__).resolve().parents[2] / "tvhost.spec"
+    text = spec.read_text(encoding="utf-8")
+    # Собираем функцию из спеки, чтобы проверить, что она вообще даёт файл.
+    assert "_ffmpeg_binaries()" in text, "спека не кладёт ffmpeg в binaries"
+    assert "binaries=_ffmpeg_binaries()" in text
+    # И что она не «заглушка» с пустым списком.
+    start = text.find("def _ffmpeg_binaries")
+    body = text[start : text.find("# Данные повторяют", start)]
+    assert "imageio_ffmpeg" in body
+    assert "binaries" in body
+    assert not re.search(r"def _ffmpeg_binaries.*?return \[\]\s*\n\s*\n", body, re.S)
+
+
+def test_2223_scan_bundle_finds_renamed_ffmpeg(tmp_path, monkeypatch) -> None:
+    """Поиск по маске: имя бинарника зависит от версии imageio-ffmpeg.
+
+    `get_ffmpeg_exe()` сверяет файл с жёстко заданным именем платформы
+    (`ffmpeg-win-x86_64-v9.0.2.exe`). Если в сборку попала другая версия,
+    он отвечает «нет» — и человек видит «замер не удался» при живом ffmpeg.
+    """
+    from tvhost2.core import ffmpeg_bin  # noqa: PLC0415
+
+    folder = tmp_path / "imageio_ffmpeg" / "binaries"
+    folder.mkdir(parents=True)
+    fake = folder / "ffmpeg-win-x86_64-v9.9.9.exe"
+    fake.write_bytes(b"MZ")
+
+    monkeypatch.setattr(ffmpeg_bin, "_CACHE", {}, raising=False)
+    monkeypatch.setattr("sys._MEIPASS", str(tmp_path), raising=False)
+    monkeypatch.setattr(ffmpeg_bin, "app_dir", lambda: tmp_path / " рядом-нет")
+
+    assert ffmpeg_bin._scan_bundle() == str(fake)
+
+
+def test_2223_find_ffmpeg_uses_bundle_when_imageio_fails(monkeypatch) -> None:
+    """Если imageio-ffmpeg не нашёл файл — выручает поиск по сборке."""
+    from tvhost2.core import ffmpeg_bin  # noqa: PLC0415
+
+    monkeypatch.setattr(ffmpeg_bin, "_CACHE", {}, raising=False)
+    monkeypatch.setattr(ffmpeg_bin.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(ffmpeg_bin, "app_dir", lambda: ffmpeg_bin.Path("/нет-такой-папки"))
+    monkeypatch.setattr(ffmpeg_bin, "_scan_bundle", lambda: "C:/распакован/ffmpeg.exe")
+
+    import imageio_ffmpeg  # noqa: PLC0415
+
+    def _boom(_self=None):  # imageio-ffmpeg в этой версии поднимает RuntimeError
+        raise RuntimeError("ffmpeg not found")
+
+    monkeypatch.setattr(imageio_ffmpeg, "get_ffmpeg_exe", _boom)
+
+    assert ffmpeg_bin.find_ffmpeg() == "C:/распакован/ffmpeg.exe"
+
+
+def test_2223_diag_ffmpeg_route_exists() -> None:
+    """Маршрут /diag/ffmpeg: спросить у собранной программы, что она видит."""
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = inspect.getsource(server)
+    assert '"/diag/ffmpeg": self._diag_ffmpeg' in source
+    assert "def _diag_ffmpeg" in source
+    assert '"runs"' in source

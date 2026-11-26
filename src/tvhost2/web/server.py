@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import mimetypes
+import subprocess
 import sys
 import threading
 import urllib.parse
@@ -471,6 +472,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
 
         exact_with_query: dict[str, Callable[[dict[str, list[str]]], None]] = {
             "/diag": self._diag,
+            "/diag/ffmpeg": self._diag_ffmpeg,
             "/hls": self._bridge,
         }
         with_query = exact_with_query.get(path)
@@ -1057,6 +1059,39 @@ class OverlayHandler(BaseHTTPRequestHandler):
         text = response.text()
         rewritten = hls_bridge.rewrite(text, response.final_url, "/hls")
         return self._playlist(rewritten.encode())
+
+    def _diag_ffmpeg(self, _query: dict[str, list[str]]) -> None:
+        """Есть ли ffmpeg ВНУТРИ собранной программы и работает ли он.
+
+        Зачем маршрут: у заказчика «Замер не удался», а в исходниках ffmpeg
+        находится. Разница только в собранном .exe (PyInstaller распаковывает
+        пакет во временную папку), и проверить это можно лишь спросив у самой
+        программы — что она видит.
+        """
+        from ..core import ffmpeg_bin  # noqa: PLC0415
+
+        path = ffmpeg_bin.find_ffmpeg()
+        info: dict[str, Any] = {
+            "found": bool(path),
+            "path": path or "",
+            "version": ffmpeg_bin.version(),
+            "frozen": bool(getattr(sys, "frozen", False)),
+            "platform": sys.platform,
+        }
+        if path:
+            info["exists"] = Path(path).is_file()
+            try:
+                # Путь наш, из своей же сборки — оболочку не задействуем.
+                check = subprocess.run(
+                    [path, "-version"], capture_output=True, text=True, timeout=20, check=False
+                )
+                info["runs"] = check.returncode == 0
+                first = (check.stdout or check.stderr or "").splitlines()
+                info["banner"] = first[0][:120] if first else ""
+            except Exception as exc:  # показываем как есть
+                info["runs"] = False
+                info["error"] = f"{type(exc).__name__}: {exc}"
+        self._json(200, info)
 
     # ---------------- громкость ----------------
     def _loudness(self, sid: str) -> None:

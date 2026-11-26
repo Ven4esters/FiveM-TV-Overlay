@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from pathlib import Path
 
 from .resources import app_dir
@@ -63,8 +64,41 @@ def find_ffmpeg() -> str | None:
         except Exception:
             found = None
 
+    # 4) В собранном .exe — рядом с распакованным пакетом. PyInstaller кладёт
+    #    данные по путям вида `_MEIPASS/imageio_ffmpeg/binaries/ffmpeg-win-…exe`,
+    #    и `get_ffmpeg_exe()` иногда их не видит: он ищет ФИКСИРОВАННОЕ имя
+    #    (`ffmpeg-win-x86_64-v9.0.2.exe`), а в сборку мог попасть файл другой
+    #    версии. Ищем по маске — имя зависит от версии пакета.
+    if not found:
+        found = _scan_bundle()
+
     _CACHE["path"] = found
     return found
+
+
+def _scan_bundle() -> str | None:
+    """ffmpeg внутри распакованной сборки PyInstaller — поиском по маске.
+
+    Почему не полагаемся только на `imageio_ffmpeg.get_ffmpeg_exe()`: он
+    сверяет файл с ЖЁСТКО заданным именем для платформы (например
+    `ffmpeg-win-x86_64-v9.0.2.exe`). Если в сборку попала другая версия или
+    файл переименован, поиск молча возвращает «нет», и человек видит «замер
+    не удался», хотя ffmpeg лежит рядом.
+    """
+    roots: list[Path] = []
+    bundle = getattr(sys, "_MEIPASS", "")  # папка распаковки --onefile
+    if bundle:
+        roots.append(Path(bundle))
+    roots.append(app_dir())
+    for root in roots:
+        for folder in (root / "imageio_ffmpeg" / "binaries", root / "bin", root):
+            if not folder.is_dir():
+                continue
+            for pattern in ("ffmpeg*.exe", "ffmpeg-*", "ffmpeg"):
+                for candidate in sorted(folder.glob(pattern)):
+                    if candidate.is_file() and candidate.name != "ffmpeg_bin.py":
+                        return str(candidate)
+    return None
 
 
 def require_ffmpeg() -> str:

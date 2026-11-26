@@ -11,11 +11,44 @@ videos/), обязано писаться рядом с .exe, а не в рас�
 Разделение путей живёт в `src/tvhost2/core/resources.py`.
 """
 
+import sys
 from pathlib import Path
 
 PROJECT = Path(SPECPATH).resolve()          # корень проекта
 SRC = PROJECT / "src"
 PKG = SRC / "tvhost2"
+
+
+def _ffmpeg_binaries() -> list[tuple[str, str]]:
+    """Положить ffmpeg из imageio-ffmpeg ВНУТРЬ сборки.
+
+    Почему руками, хотя PyInstaller вроде бы умеет сам: `imageio-ffmpeg`
+    достаёт бинарник через `importlib.resources.files("imageio_ffmpeg.binaries")`,
+    то есть требует НАСТОЯЩУЮ папку с файлом. В `--onefile` пакет
+    распаковывается во временную папку, и файл должен быть в списке данных,
+    а не «где-то в site-packages». На Linux хук PyInstaller это подхватывал,
+    на Windows — нет, отсюда «ffmpeg не найден» у заказчика при том, что в
+    исходниках всё находилось.
+
+    Необязательный шаг: если пакета нет, сборка просто пойдёт без ffmpeg
+    (замер громкости будет честно говорить «нужен ffmpeg»).
+    """
+    try:
+        import imageio_ffmpeg  # noqa: PLC0415
+    except Exception:
+        return []
+    exe = ""
+    try:
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        # Пакет есть, но бинарник не скачался (бывает при установке без
+        # сети) — ищем файл в его папке напрямую.
+        folder = Path(imageio_ffmpeg.__file__).parent / "binaries"
+        found = sorted(folder.glob("ffmpeg*")) if folder.is_dir() else []
+        exe = str(found[0]) if found else ""
+    if not exe or not Path(exe).is_file():
+        return []
+    return [(exe, "imageio_ffmpeg/binaries")]
 
 # Данные повторяют структуру пакета: tvhost2/web/static/... тогда
 # `resources.resource("..", "web", "static")` находит их и в .exe.
@@ -73,7 +106,9 @@ excluded = [
 a = Analysis(
     [str(SRC / "tvhost2_entry.py")],
     pathex=[str(SRC)],
-    binaries=[],
+    # ffmpeg — данные, а не модуль: без него в собранном .exe не работает
+    # ни замер громкости, ни аварийная склейка дорожек.
+    binaries=_ffmpeg_binaries(),
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

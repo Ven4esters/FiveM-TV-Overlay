@@ -1,0 +1,77 @@
+name: Сборка Windows .exe
+
+# Зачем отдельный workflow, а не только ci.yml: единственный способ узнать,
+# работает ли ffmpeg ВНУТРИ собранного .exe — собрать его на настоящей
+# Windows и запустить. В песочнице разработки стоит Linux, и там PyInstaller
+# кладёт бинарник без суффикса `.exe`, поэтому проверка «нашёлся ли ffmpeg»
+# проходит, даже когда на Windows она падает.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tvhost.spec"
+      - "src/tvhost2/core/ffmpeg_bin.py"
+      - "requirements*.txt"
+      - ".github/workflows/windows-build.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+
+      - name: Зависимости
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-v2.txt
+          pip install pyinstaller
+
+      - name: Что именно скачал imageio-ffmpeg
+        run: |
+          python -c "import imageio_ffmpeg, os; print('package:', os.path.dirname(imageio_ffmpeg.__file__)); print('exe:', imageio_ffmpeg.get_ffmpeg_exe())"
+          python -c "import imageio_ffmpeg, os, glob; d=os.path.join(os.path.dirname(imageio_ffmpeg.__file__),'binaries'); print('binaries:'); print('\n'.join(glob.glob(d+'/*')))"
+        shell: cmd
+
+      - name: Сборка .exe
+        run: python -m PyInstaller --noconfirm tvhost.spec
+
+      - name: Проверка — ffmpeg ВНУТРИ собранного .exe
+        run: |
+          python -c "
+          import subprocess, sys, os
+          exe = os.path.join('dist', 'FiveM-Video-Overlay.exe')
+          print('exe:', exe, os.path.isfile(exe), os.path.getsize(exe) if os.path.isfile(exe) else 0)
+          "
+        shell: cmd
+
+      - name: Запустить .exe и спросить про ffmpeg
+        run: |
+          REM Приложение оконное (console=False), поэтому печатать в stdout оно
+          REM не умеет. Проверяем не вывод, а факт старта прокси и то, что
+          REM замер громкости не отвечает «нужен ffmpeg».
+          start "" dist\FiveM-Video-Overlay.exe --port 9100
+          timeout /t 25 /nobreak > nul
+          python -c "
+          import json, urllib.request
+          opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+          try:
+              with opener.open('http://127.0.0.1:9100/diag/ffmpeg', timeout=20) as r:
+                  print('ОТВЕТ:', r.read().decode())
+          except Exception as e:
+              print('ОШИБКА:', type(e).__name__, e)
+          "
+        shell: cmd
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-exe
+          path: dist/FiveM-Video-Overlay.exe
+          retention-days: 7
