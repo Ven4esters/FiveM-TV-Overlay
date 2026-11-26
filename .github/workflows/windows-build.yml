@@ -42,13 +42,11 @@ jobs:
       - name: Сборка .exe
         run: python -m PyInstaller --noconfirm tvhost.spec
 
-      - name: Проверка — ffmpeg ВНУТРИ собранного .exe
-        run: |
-          python -c "
-          import subprocess, sys, os
-          exe = os.path.join('dist', 'FiveM-Video-Overlay.exe')
-          print('exe:', exe, os.path.isfile(exe), os.path.getsize(exe) if os.path.isfile(exe) else 0)
-          "
+      - name: Размер собранного .exe
+        # Одной строкой: в cmd переносы внутри `python -c "..."` ломают
+        # разбор и шаг падает ещё до всякой проверки сборки — так и вышло
+        # в первом прогоне (сборка успешна, упала проверка).
+        run: python -c "import os; p=r'dist\FiveM-Video-Overlay.exe'; print('exe:', p, 'есть:', os.path.isfile(p), 'байт:', os.path.getsize(p) if os.path.isfile(p) else 0)"
         shell: cmd
 
       - name: Запустить .exe и спросить про ffmpeg
@@ -58,15 +56,7 @@ jobs:
           REM замер громкости не отвечает «нужен ffmpeg».
           start "" dist\FiveM-Video-Overlay.exe --port 9100
           timeout /t 25 /nobreak > nul
-          python -c "
-          import json, urllib.request
-          opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-          try:
-              with opener.open('http://127.0.0.1:9100/diag/ffmpeg', timeout=20) as r:
-                  print('ОТВЕТ:', r.read().decode())
-          except Exception as e:
-              print('ОШИБКА:', type(e).__name__, e)
-          "
+          python tools/check_ffmpeg_diag.py
         shell: cmd
 
       - uses: actions/upload-artifact@v4
