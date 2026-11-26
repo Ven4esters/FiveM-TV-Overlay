@@ -560,8 +560,9 @@ def test_219_dropdowns_are_scrollable() -> None:
     # Все три селектора создаются через общий помощник — значит все с прокруткой.
     build = __import__("inspect").getsource(panel.Panel._make_pick)
     assert "_scrollable(box)" in build
-    for name in ("episode_box", "translation_box", "quality_box"):
-        assert f"_make_pick(" in __import__("inspect").getsource(panel.Panel)
+    builder = __import__("inspect").getsource(panel.Panel)
+    # Все три селектора создаются через общий помощник — значит все с прокруткой.
+    assert builder.count("_make_pick(") >= 3
 
 
 def test_219_scrollable_list_limits_rows() -> None:
@@ -616,3 +617,159 @@ def test_219_player_errors_reach_the_journal() -> None:
     block = html[start : start + 700]
     assert "trace(" in block, "ошибки потока не пишутся в журнал"
     assert "video.error" in html, "ошибка <video> не пишется в журнал"
+
+
+# ---------------------------------------------------------------------------
+#  2.2.0 (отчёт на 2.1.9, с журналом Kodik/yani): серия откатывалась на
+#  первую, пульт не показывал номер, заголовок врал, поток ждал CDN
+# ---------------------------------------------------------------------------
+
+
+def test_220_polling_does_not_reset_the_open_dropdown() -> None:
+    """Опрос каждые 800 мс не должен сбивать выбор в открытом списке.
+
+    Это и была жалоба «какую бы серию ни выбрал — уходит 1-я»: `_fill_episodes`
+    вызывался на каждом опросе и делал `clear()`, а `clear()` у открытого
+    списка возвращает наведение на первую строку. Человек вёл мышь к 5-й
+    серии, а `activated` приходил со строкой 0.
+    """
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.ui import panel  # noqa: PLC0415
+
+    source = inspect.getsource(panel.Panel._fill_episodes)
+    # Список пересоздаётся только при изменении содержимого.
+    assert "if titles != shown:" in source
+    # И позиция двигается только при реальной смене.
+    assert "if found >= 0 and found != self.episode_box.currentIndex():" in source
+
+
+def test_220_live_dropdown_keeps_its_row_across_polls() -> None:
+    from tvhost2.ui import panel as panel_mod  # noqa: PLC0415
+
+    window = _panel()
+    box = window.episode_box
+    state = {
+        "episodes": [f"{n} серия" for n in range(1, 10)],
+        "episode": 1,
+        "canSwitchEpisode": True,
+    }
+    window._apply_state(state)
+    box.showPopup()
+    box.view().setCurrentIndex(box.model().index(4, 0))
+    assert box.view().currentIndex().row() == 4
+    window._apply_state(state)  # пришёл опрос — содержимое то же
+    assert box.view().currentIndex().row() == 4, "опрос сбил наведение на 1-ю строку"
+    box.hidePopup()
+    assert panel_mod is not None
+
+
+def test_220_refusal_is_not_success() -> None:
+    """200 с `ok: false` — это отказ, а не успех.
+
+    В журнале заказчика: «серия 6 не открылась», и сразу за ней «серия 6
+    открыта, просим плеер перезагрузиться» — пульт принимал отказ за успех,
+    потому что проверял только транспортный код.
+    """
+    from tvhost2.ui.api import ApiResult  # noqa: PLC0415
+
+    refused = ApiResult(ok=True, status=200, data={"ok": False, "reason": "нет серии"})
+    assert not refused.accepted
+    assert refused.accepted is False
+    good = ApiResult(ok=True, status=200, data={"ok": True})
+    assert good.accepted
+    # Старый ответ без поля `ok` считается успехом — контракт не ломаем.
+    assert ApiResult(ok=True, status=200, data={}).accepted
+
+
+def test_220_panel_uses_accepted_everywhere() -> None:
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.ui import panel  # noqa: PLC0415
+
+    source = inspect.getsource(panel)
+    assert source.count("result.accepted") >= 3, "где-то осталась проверка только транспорта"
+
+
+def test_220_status_line_shows_the_episode() -> None:
+    """«В пульте не видно, какая серия» — номер живёт в строке состояния."""
+    from tvhost2.ui.panel import _episode_mark  # noqa: PLC0415
+
+    assert _episode_mark({"episode": 5}) == "5 серия · "
+    assert _episode_mark({"episode": 2, "episodeSeason": 3}) == "3 сезон · 2 серия · "
+    assert _episode_mark({"episode": 0}) == ""
+    assert _episode_mark({}) == ""
+
+
+def test_220_kodik_opens_the_first_episode_by_number() -> None:
+    """Без запрошенного номера Kodik открывал не первую серию.
+
+    Список Kodik идёт вразнобой: у `/serial/35906` первой строкой стоит
+    ВОСЬМАЯ серия, и `episodes[0]` включал именно её.
+    """
+    from tvhost2.sources.kodik import _episode_order  # noqa: PLC0415
+
+    episodes = [
+        {"season": 1, "episode": 8, "id": "a"},
+        {"season": 1, "episode": 10, "id": "b"},
+        {"season": 1, "episode": 1, "id": "c"},
+    ]
+    assert min(episodes, key=_episode_order)["episode"] == 1
+
+
+def test_220_title_carries_the_episode_it_actually_plays() -> None:
+    """Заголовок обязан врать ровно настолько, насколько врёт поток."""
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.sources import kodik  # noqa: PLC0415
+
+    source = inspect.getsource(kodik.KodikSource.resolve)
+    assert "shown = current_episode if episodes else 0" in source, (
+        "заголовок снова строится по ЗАПРОШЕННОМУ номеру, а не по настоящему"
+    )
+
+
+def test_220_cvh_title_changes_with_the_episode() -> None:
+    """У yani.tv заголовок не менялся при переходе по сериям."""
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.sources import cvh  # noqa: PLC0415
+
+    source = inspect.getsource(cvh)
+    assert "· {current_episode} серия" in source, "серия не попала в заголовок"
+
+
+def test_220_segment_cache_saves_the_second_request() -> None:
+    """Сегмент с CDN идёт секунды, hls.js столько не ждёт — нужен повтор из памяти."""
+    from tvhost2.web.server import SegmentCache  # noqa: PLC0415
+
+    cache = SegmentCache()
+    assert cache.get("k") is None
+    cache.put("k", b"payload", "video/mp2t")
+    found = cache.get("k")
+    assert found is not None
+    assert found[0] == b"payload"
+    # Ограничение по размеру: гигантский файл (полный mp4) не кладём.
+    cache.put("big", b"x" * (SegmentCache.LIMIT_BYTES // 2), "video/mp4")
+    assert cache.get("big") is None
+
+
+def test_220_segment_cache_evicts_the_oldest() -> None:
+    from tvhost2.web.server import SegmentCache  # noqa: PLC0415
+
+    cache = SegmentCache()
+    chunk = b"x" * (SegmentCache.LIMIT_BYTES // 8)
+    for n in range(9):  # 9 × 8 МБ = 72 МБ > 64 МБ
+        cache.put(f"s{n}", chunk, "video/mp2t")
+    assert cache.get("s0") is None, "самый старый сегмент не вытеснен"
+    assert cache.get("s8") is not None
+
+
+def test_220_bridge_serves_segments_from_memory() -> None:
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = inspect.getsource(server.OverlayHandler._bridge)
+    assert "STATE.segments.get(" in source
+    assert "STATE.segments.put(" in source

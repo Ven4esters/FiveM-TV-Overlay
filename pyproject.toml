@@ -1,6 +1,6 @@
 [project]
 name = "tvhost"
-version = "2.1.9"
+version = "2.2.0"
 description = "GTA Video Overlay — панель и локальный прокси для показа видео на телевизоре в GTA 5"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -4,5 +4,5 @@
 Зависимости идут только вниз. `core` не знает ни о чём.
 """
 
-__version__ = "2.1.9"
+__version__ = "2.2.0"
 APP_NAME = "FiveM Video Overlay"

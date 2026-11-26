@@ -443,7 +443,15 @@ def build_stream(
         {"season": "", "episode": str(number), "title": f"{number} серия"}
         for number in sorted(groups)
     )
+    # Название БЕЗ серии: серию дописываем ниже. Раньше здесь стоял
+    # `titleName` как есть, и заголовок страницы не менялся при переходе
+    # с серии на серию — в журнале заказчика «в заголовке всегда 1 серия»
+    # (у yani.tv и подобных поток менялся, а подпись — нет).
     title = str(playlist.get("titleName") or base_title or site)
+    if title.endswith(f"— серия {current_episode}") or title.endswith(
+        f"— {current_episode} серия"
+    ):
+        title = title.rsplit("—", 1)[0].strip()
     log.info(
         "%s: %s → серия %s, %s, %s варианта",
         source_name,
@@ -454,7 +462,9 @@ def build_stream(
     )
     return Stream(
         source=source_name,
-        title=f"{title} — серия {current_episode}",
+        # «серия N» — хвостом, единым видом для всех источников: по нему
+        # пульт и заголовок страницы понимают, что играет.
+        title=f"{title} · {current_episode} серия",
         kind=StreamKind.HLS,
         qualities=qualities,
         duration_s=int(video.get("duration") or 0),

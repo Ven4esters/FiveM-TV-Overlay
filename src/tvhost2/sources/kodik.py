@@ -472,6 +472,43 @@ def _options(html: str, box: str) -> list[dict[str, str]]:
     return items
 
 
+def _episode_order(episode: dict[str, Any]) -> tuple[int, int, str]:
+    """Порядок серий: сезон, номер, затем id — для «самой первой».
+
+    Номера в разметке могут быть строками и с дырами, поэтому сортируем
+    приведёнными числами, а не текстом: иначе «10» окажется раньше «2».
+    """
+
+    def num(value: Any) -> int:
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return 1 << 30
+
+    return (num(episode.get("season")), num(episode.get("episode")), str(episode.get("id")))
+
+
+def _opened_episode(episodes: list[dict[str, Any]], ref: KodikRef, html: str) -> int:
+    """Какую серию Kodik включит, если номер не просили.
+
+    Ссылка без номера означает «с начала» — это первая серия ПО НОМЕРУ, а не
+    первая строка списка: у `/serial/35906` списком командует восьмая.
+    Раньше номер брали из подписи `vInfo`, и человек, открыв сериал, получал
+    восьмую серию (жалоба «Kodik всегда играет не ту»).
+
+    Исключение одно — адрес, скопированный ИЗ плеера на конкретной серии:
+    тогда её id совпадает с `ref.video_id`, и `pick_episode` поток не
+    подменяет. Проверяем ровно это условие, чтобы подпись не разошлась с
+    тем, что реально включится.
+    """
+    if any(str(e.get("id")) == ref.video_id for e in episodes):
+        vinfo_id = str(page_vinfo(html).get("id") or "")
+        match = next((e for e in episodes if str(e.get("id")) == vinfo_id), None)
+        number = str(match.get("episode", "")) if match else ""
+        return int(number) if number.isdigit() else 1
+    return int(str(min(episodes, key=_episode_order).get("episode") or 1))
+
+
 def pick_episode(episodes: list[dict[str, Any]], ref: KodikRef) -> tuple[str, str]:
     """id и hash нужной серии. Пустая пара — оставить как в адресе.
 
@@ -488,10 +525,19 @@ def pick_episode(episodes: list[dict[str, Any]], ref: KodikRef) -> tuple[str, st
     if any(str(e.get("id")) == ref.video_id for e in episodes):
         return "", ""
     wanted = str(ref.episode or 1)
-    picked = next(
-        (e for e in episodes if str(e.get("episode")) == wanted),
-        episodes[0],
-    )
+    if ref.episode:
+        picked = next(
+            (e for e in episodes if str(e.get("episode")) == wanted),
+            episodes[0],
+        )
+    else:
+        # Номер не просили — открываем ПЕРВУЮ по номеру, а не первую строку
+        # списка. Список Kodik идёт вразнобой (у `/serial/35906` восьмая
+        # серия стоит первой), и `episodes[0]` включал восьмую. Отсюда
+        # жалоба «Kodik всегда играет не ту серию» и заголовок «1 серия»
+        # при фактически восьмой.
+        picked = min(episodes, key=_episode_order)
+
     # Номер, которого в списке нет, — не повод открыть другую серию молча:
     # человек увидит не то, что просил. Отдаём первую только когда номера
     # не было вовсе.
@@ -723,18 +769,26 @@ class KodikSource:
         )
         current_episode = ref.episode
         if not current_episode and episodes:
-            # Ссылка без номера: Kodik сам выбрал серию по `vInfo`. Найти её
-            # можно только по id из подписи — если он там есть.
-            vinfo_id = str(page_vinfo(html).get("id") or "")
-            match = next((e for e in episodes if str(e.get("id")) == vinfo_id), None)
-            number = str(match.get("episode", "")) if match else ""
-            current_episode = int(number) if number.isdigit() else 1
+            # Ссылка без номера. Kodik в подписи `vInfo` держит серию, которую
+            # включал последней, — у `/serial/35906` это ВОСЬМАЯ. Следовать за
+            # ней нельзя: человек открыл сериал, а ему включают восьмую серию,
+            # и заголовок честно писал «8 серия» (жалоба «всегда не та серия»).
+            # Ссылка без номера означает «с начала» — то есть первую серию.
+            # Но если человек дал адрес, скопированный ИЗ плеера на конкретной
+            # серии (её id есть в списке), уважаем его выбор.
+            current_episode = _opened_episode(episodes, ref, html)
 
         title = _title_from_html(html) or "Kodik"
-        if episodes and ref.episode:
+        # Номер, который на самом деле открылся: просили один, а плеер мог
+        # отдать другой (он ставит `vInfo` сам). Заголовок обязан врать
+        # ровно настолько же, насколько врёт поток, поэтому берём НАСТОЯЩИЙ
+        # номер, а не запрошенный: из-за этого в заголовке вечно стояла
+        # «1 серия» при десятой на экране.
+        shown = current_episode if episodes else 0
+        if episodes and shown > 0:
             label = next(
-                (e.get("title") for e in episodes if str(e.get("episode")) == str(ref.episode)),
-                f"{ref.episode} серия",
+                (e.get("title") for e in episodes if str(e.get("episode")) == str(shown)),
+                f"{shown} серия",
             )
             title = f"{title} · {label}"
         return Stream(

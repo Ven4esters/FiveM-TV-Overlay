@@ -99,6 +99,28 @@ def _scrollable(box: QComboBox, rows: int = 18) -> None:
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
 
+def _episode_mark(state: dict) -> str:
+    """«2 серия · » — какая серия играет, прямо в строке состояния.
+
+    Жалоба «в пульте не отображается, какая серия»: номер жил только в
+    выпадающем списке, а он в свёрнутом виде показывает одно значение и при
+    ошибке разбора залипал на первой строке. Строка состояния видна всегда,
+    в том числе когда список серий скрыт (фильм) — тогда приставка пустая.
+    """
+    try:
+        number = int(state.get("episode") or 0)
+    except (TypeError, ValueError):
+        return ""
+    if number < 1:
+        return ""
+    season = state.get("episodeSeason")
+    try:
+        season_no = int(season or 0)
+    except (TypeError, ValueError):
+        season_no = 0
+    return f"{season_no} сезон · {number} серия · " if season_no else f"{number} серия · "
+
+
 class Panel(QWidget):
     """Окно оверлея: пульт, источники, журнал."""
 
@@ -894,30 +916,41 @@ class Panel(QWidget):
         can = data.get("canSwitchEpisode")
         if can is None:
             can = len(titles) > 1
-        self.episode_box.blockSignals(True)
-        self.episode_box.clear()
-        if titles:
+        # Пересоздавать строки МОЖНО только когда список правда изменился.
+        # Иначе беда: опрос идёт каждые 800 мс, `clear()` у открытого списка
+        # сбрасывает наведение на первую строку — человек наводит мышь на
+        # 5-ю серию, щёлкает, а в обработчик приходит строка 0 («1 серия»).
+        # Именно это и было в журнале: «строка 0 → серия 1» при любом выборе.
+        shown = [self.episode_box.itemText(i) for i in range(self.episode_box.count())]
+        if titles != shown:
+            self.episode_box.blockSignals(True)
+            self.episode_box.clear()
             self.episode_box.addItems(titles)
+            self.episode_box.blockSignals(False)
+        if titles:
             # Номер может прийти строкой («3») — приводим, но без падения:
             # список серий не должен ломать пульт.
             try:
-                current = int(data.get("episode") or 0)
+                number = int(data.get("episode") or 0)
             except (TypeError, ValueError):
-                current = 0
-            # Ставим по НОМЕРУ серии, а не по «номер минус один». У сериала
+                number = 0
+            # Ставим по НОМЕРУ серии, а не по «номер минус один»: у сериала
             # бывают дыры в нумерации (у anidub.org встречается), и тогда
             # индекс в списке не совпадает с номером: при сериях 1, 3, 5
             # третья строка — это 5-я серия, а не 3-я. Номер серии есть в
             # подписи («3 серия»), по ней и сверяемся.
             #
-            # -1 значит «такой серии в списке нет» — оставляем как выбрал
-            # Qt (первую строку), а не ставим мусорный индекс.
-            found = episode_index(titles, current)
-            if found >= 0:
+            # -1 значит «такой серии в списке нет» — оставляем как есть,
+            # а не ставим мусорный индекс.
+            found = episode_index(titles, number)
+            # Двигаем позицию только при реальной смене: лишний
+            # setCurrentIndex дёргает открытый список и сбивает выбор.
+            if found >= 0 and found != self.episode_box.currentIndex():
+                self.episode_box.blockSignals(True)
                 self.episode_box.setCurrentIndex(found)
+                self.episode_box.blockSignals(False)
             season = str(data.get("episodeSeason") or "").strip()
             self.episode_box.setToolTip(f"{season} сезон · серия" if season else "Серия")
-        self.episode_box.blockSignals(False)
         self.episode_box.setVisible(bool(can))
 
     def _episode_picked(self, index: int) -> None:
@@ -944,8 +977,14 @@ class Panel(QWidget):
             except ApiError as exc:
                 self.error_text.emit(str(exc), "Проверьте, что прокси запущен")
                 return
-            if not result.ok:
+            if not result.accepted:
+                # Пульт обязан отличать «сервер отказал» от «сервер ответил»:
+                # иначе он пишет «серия открыта» и дёргает перезагрузку
+                # страницы, а в телевизоре остаётся прежняя серия.
+                self._episode_busy = False
+                diag_log("err", f"серия {number} не открылась: {result.reason}")
                 self.error_text.emit(result.reason, result.hint)
+                self._set_remote_status(f"Пульт: {number}-я серия не открылась")
                 return
             diag_log("ui", f"серия {number} открыта, просим плеер перезагрузиться")
             self.episode_ready.emit()
@@ -1004,7 +1043,7 @@ class Panel(QWidget):
                 diag_log("err", f"команда {cmd} не дошла: {exc}")
                 self.error_text.emit(str(exc), "Проверьте, что прокси запущен")
                 return
-            if not result.ok:
+            if not result.accepted:
                 diag_log("err", f"команда {cmd} отклонена: {result.reason}")
                 self.error_text.emit(result.reason, result.hint)
             else:
@@ -1040,7 +1079,8 @@ class Panel(QWidget):
             except ApiError as exc:
                 self.error_text.emit(str(exc), "Проверьте, что прокси запущен")
                 return
-            if not result.ok:
+            if not result.accepted:
+                diag_log("err", f"озвучка {index} не переключилась: {result.reason}")
                 self.error_text.emit(result.reason, result.hint)
                 return
             self._set_remote_status("Пульт: озвучка сменилась — телевизор перезагрузит страницу")
@@ -1137,7 +1177,8 @@ class Panel(QWidget):
             self._paint_mute()
         playing = bool(state.get("playing"))
         self._set_remote_status(
-            f"Пульт: {'играет' if playing else 'пауза'}  {_mmss(position)} / {_mmss(duration)}"
+            "Пульт: " + _episode_mark(state) + f"{'играет' if playing else 'пауза'}  "
+            f"{_mmss(position)} / {_mmss(duration)}"
         )
         self.btn_play.setIcon(theme.icon("pause" if playing else "play", 22))
         # Иконку звука уже поставил `_paint_mute()` выше — второй раз не надо:

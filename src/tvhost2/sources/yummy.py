@@ -257,9 +257,16 @@ class YummyAnimeSource:
         index = translation_index if 0 <= translation_index < len(tracks) else 0
         chosen = tracks[index]
         stream = self._play(chosen, episode)
+        # Название тайтла — без серии (оно со страницы), поэтому номер
+        # дописываем сами. Раньше заголовок не менялся при переходе по
+        # сериям: жалоба «в заголовке всегда 1 серия» была именно про это —
+        # страница-плеер берёт <title> из этой строки.
+        base = self._titles.get(url) or stream.title
+        shown = stream.episode or (episode or 0)
+        title = f"{base} · {shown} серия" if shown > 0 else base
         return Stream(
             source=_NAME,
-            title=self._titles.get(url) or stream.title,
+            title=title,
             kind=stream.kind,
             qualities=stream.qualities,
             headers=stream.headers,

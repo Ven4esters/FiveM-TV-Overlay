@@ -28,7 +28,7 @@ import mimetypes
 import sys
 import threading
 import urllib.parse
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -82,6 +82,52 @@ class SessionRuntime:
             return self.seq, [c for c in self.commands if c["seq"] > seq]
 
 
+class SegmentCache:
+    """Небольшой кэш сегментов и кусков файла: адрес → байты.
+
+    Почему на сервере, а не только в браузере: у сегментов CDN подпись
+    одноразовая, и браузер обязан идти заново тем же адресом; отдавая из
+    памяти, мы снимаем ровно ту задержку, из-за которой hls.js объявляет
+    `fragLoadTimeOut`. Размер ограничен: сегменты весят по 1–2 МБ, сотня
+    штук в памяти — это ~100 МБ, поэтому предел 64 МБ и вытеснение самых
+    старых.
+    """
+
+    LIMIT_BYTES = 64 * 1024 * 1024
+    """Сколько памяти разрешено. Больше — уже неприлично для прокси."""
+
+    def __init__(self) -> None:
+        self._items: OrderedDict[str, tuple[bytes, str, str]] = OrderedDict()
+        self._lock = threading.Lock()
+        self._size = 0
+
+    def get(self, key: str) -> tuple[bytes, str, str] | None:
+        with self._lock:
+            found = self._items.get(key)
+            if found is None:
+                return None
+            self._items.move_to_end(key)
+            return found
+
+    def put(self, key: str, body: bytes, ctype: str, extra: str = "") -> None:
+        if len(body) > self.LIMIT_BYTES // 4:
+            return  # одиночный гигант (полный mp4) в память не кладём
+        with self._lock:
+            if key in self._items:
+                old = self._items.pop(key)[0]
+                self._size -= len(old)
+            self._items[key] = (body, ctype, extra)
+            self._size += len(body)
+            while self._size > self.LIMIT_BYTES and self._items:
+                _, (dropped, _, _) = self._items.popitem(last=False)
+                self._size -= len(dropped)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._items.clear()
+            self._size = 0
+
+
 class AppState:
     """Всё изменяемое состояние процесса в одном месте."""
 
@@ -91,6 +137,12 @@ class AppState:
         self.loudness = loudness.LoudnessCache(Path("videos/cache/loudness.json"))
         self.loudness_lock = threading.Lock()
         self.history = HISTORY
+        # Кэш сегментов HLS. Зачем: сегмент Kodik идёт с CDN ~3 с, а hls.js
+        # ждёт ответа меньше и объявляет `fragLoadTimeOut` — в журнале
+        # заказчика это сплошные таймауты, из-за которых «поток не
+        # загрузился». Плеер повторяет запрос того же сегмента — и второй
+        # раз он обязан прийти мгновенно.
+        self.segments = SegmentCache()
 
     def runtime_for(self, sid: str) -> SessionRuntime:
         if sid not in self.runtime:
@@ -735,6 +787,21 @@ class OverlayHandler(BaseHTTPRequestHandler):
         # режем его на 8 МБ, и плеер получает битый поток: «Видео не
         # воспроизводится, ошибка декодирования» при ±10 секундах.
         wanted = str(self.headers.get("Range") or "").strip()
+        # Повторный запрос того же куска — из памяти. Первый раз мог
+        # прийти медленнее, чем ждёт hls.js (`fragLoadTimeOut`), и плеер
+        # повторит адрес слово в слово; второй раз обязан быть мгновенным.
+        cache_key = f"{target}|{wanted}"
+        cached = STATE.segments.get(cache_key)
+        if cached is not None:
+            body, ctype, extra_raw = cached
+            extra = {"Content-Range": extra_raw} if extra_raw else None
+            return self._send(
+                HTTP_PARTIAL if wanted else 200,
+                body,
+                ctype,
+                cache="no-store",
+                extra=extra,
+            )
         try:
             # file:// — склейка ffmpeg (видео+звук): отдаём плейлист и сегменты
             # с диска тем же путём, что и сетевые. Отдельной ветки не нужно:
@@ -752,11 +819,15 @@ class OverlayHandler(BaseHTTPRequestHandler):
             # сегмент или кусок файла: отдаём как есть, без «переписывания»
             ctype = response.content_type or "video/mp2t"
             if response.status == HTTP_PARTIAL:
-                extra: dict[str, str] = {}
+                part_headers: dict[str, str] = {}
                 content_range = response.headers.get("content-range")
                 if content_range:
-                    extra["Content-Range"] = content_range
-                return self._send(HTTP_PARTIAL, response.body, ctype, extra=extra)
+                    part_headers["Content-Range"] = content_range
+                # Куски прямого файла не кэшируем: их просят под перемотку
+                # и адреса всегда разные.
+                return self._send(HTTP_PARTIAL, response.body, ctype, extra=part_headers)
+            # Сегмент — кладём в память: следующий запрос будет мгновенным.
+            STATE.segments.put(cache_key, response.body, ctype)
             return self._send(200, response.body, ctype, cache="no-store")
 
         text = response.text()
