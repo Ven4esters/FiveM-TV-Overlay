@@ -771,8 +771,12 @@ def test_220_bridge_serves_segments_from_memory() -> None:
     from tvhost2.web import server  # noqa: PLC0415
 
     source = inspect.getsource(server.OverlayHandler._bridge)
-    assert "STATE.segments.get(" in source
-    assert "STATE.segments.put(" in source
+    # Кэш теперь читается через отдельный метод (развилок в мосте и без
+    # того много), а пишется — потоковой отдачей `_send_stream`.
+    assert "self._from_cache(" in source
+    assert "_send_stream(" in source
+    assert "STATE.segments.get(" in inspect.getsource(server.OverlayHandler._from_cache)
+    assert "STATE.segments.put(" in inspect.getsource(server.OverlayHandler._send_stream)
 
 
 # ---------------------------------------------------------------------------
@@ -862,3 +866,176 @@ def test_221_segment_cache_can_claim_a_slot() -> None:
     cache.release("k")
     assert cache.busy("k") is False
     assert cache.claim("k") is True
+
+
+# ---------------------------------------------------------------------------
+#  2.2.2 (отчёт на 2.2.1): 502 на сегментах, замер громкости, пропадающее
+#  уведомление, одна и та же серия, «нет такой озвучки»
+# ---------------------------------------------------------------------------
+
+
+def test_222_segments_are_streamed_not_buffered() -> None:
+    """Сегмент anidub.com (3 МБ) приходит 22 с — копить его нельзя.
+
+    Пока копили, hls.js сдавался и просил заново, повтор лез в тот же
+    медленный канал — в журнале `fragLoadError HTTP 502` и «серия не
+    запускается».
+    """
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = inspect.getsource(server.OverlayHandler._send_stream)
+    assert "response.read(64 * 1024)" in source, "сегмент снова читается целиком"
+    assert "self.wfile.write(chunk)" in source, "байты не уходят по мере чтения"
+    # И мост обязан отдавать сегменты именно этим путём.
+    bridge = inspect.getsource(server.OverlayHandler._bridge)
+    assert "_send_stream(" in bridge
+
+
+def test_222_playlist_detection_does_not_fetch() -> None:
+    """Плейлист или сегмент решаем по адресу, без скачивания."""
+    from tvhost2.web.server import _looks_like_playlist  # noqa: PLC0415
+
+    assert _looks_like_playlist("https://cdn/x/manifest.m3u8")
+    assert _looks_like_playlist("https://cdn/x/720.mp4:hls:manifest.m3u8")
+    assert _looks_like_playlist("file:///tmp/a/index.m3u8")
+    assert not _looks_like_playlist("https://cdn/x/seg-1-v1-a1.ts")
+    assert not _looks_like_playlist("https://cdn/x/master")
+
+
+def test_222_loudness_says_what_is_wrong() -> None:
+    """«Замер не удался» не объясняло причину.
+
+    Две разные беды (нет ffmpeg / поток не прочитался) сливались в одно
+    сообщение, и человек не знал, что чинить.
+    """
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = inspect.getsource(server.OverlayHandler._loudness)
+    assert '"нужен ffmpeg"' in source
+    assert '"fix"' in source, "нет подсказки, что делать"
+
+
+def test_222_subtitle_notice_survives_polling() -> None:
+    """Уведомление про субтитры не должно исчезать через 800 мс."""
+    from tvhost2.ui import panel as panel_mod  # noqa: PLC0415
+
+    window = _panel()
+    window.btn_subs.click()
+    shown = window.remote_status.text()
+    assert shown, "уведомление не показалось"
+    for _ in range(4):  # четыре опроса подряд
+        window._apply_state({"playing": True, "position": 0, "duration": 0})
+    assert window.remote_status.text() == shown, "опрос затёр уведомление"
+    assert panel_mod is not None
+
+
+def test_222_stream_url_is_versioned() -> None:
+    """Адрес потока обязан меняться при смене серии.
+
+    `/stream/<sid>` одинаков для всех серий, и CEF мог достать мастер
+    прежней серии из кэша — «разные серии приводят к одной».
+    """
+    from tvhost2.web import player  # noqa: PLC0415
+
+    assert '"/stream/" + SID + "?v=" + STREAM_VERSION' in player.SCRIPT
+    assert 'var STREAM_VERSION = "__STREAM_VERSION__"' in player.SCRIPT
+
+
+def test_222_playlists_forbid_caching() -> None:
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = inspect.getsource(server.OverlayHandler._playlist)
+    assert "Pragma" in source and "no-cache" in source
+
+
+def test_222_busy_flag_is_cleared_on_error() -> None:
+    """Одна неудача не должна навсегда отключать выбор.
+
+    В журнале: одна ошибка «нет такой озвучки» — и дальше ни одна озвучка
+    не переключалась: флаг `_translation_busy` оставался взведённым.
+    """
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.ui import panel  # noqa: PLC0415
+
+    source = inspect.getsource(panel.Panel._translation_changed)
+    # Флаг снимается и в ветке ApiError, и в ветке отказа.
+    assert source.count("self._translation_busy = False") >= 2
+    episode = inspect.getsource(panel.Panel._episode_picked)
+    assert "except ApiError as exc:" in episode
+    assert episode.count("self._episode_busy = False") >= 2
+
+
+def test_222_missing_studio_is_reported() -> None:
+    """Просили студию, которой нет на этой серии — говорим прямо."""
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.web import server  # noqa: PLC0415
+
+    source = inspect.getsource(server.OverlayHandler._translation)
+    assert "missing" in source
+    assert "warning" in source
+    panel_source = inspect.getsource(server.OverlayHandler)
+    assert "warning" in inspect.getsource(
+        __import__("tvhost2.ui.panel", fromlist=["panel"]).Panel._translation_changed
+    ), "пульт не показывает предупреждение"
+    assert panel_source is not None
+
+
+# ---------------------------------------------------------------------------
+#  2.2.2 (продолжение): anidub.com открывал первую серию для всех номеров
+# ---------------------------------------------------------------------------
+
+
+def test_2222_anidub_requests_playlist_parameter() -> None:
+    """Без `&playlist` плеер отдаёт `"episodes":[]`.
+
+    Проверено на «Покемон. Горизонты» 26.11.2026: с параметром приходит
+    полный список из 157 записей, без него — пустой, и играет та серия,
+    что записана в пути (первая).
+    """
+    from tvhost2.sources.anidub import _with_playlist  # noqa: PLC0415
+
+    assert "playlist" in _with_playlist("https://p/index.php?v=/s2/abc")
+    assert _with_playlist("https://p/index.php?v=/s2/abc").endswith("&playlist")
+    assert _with_playlist("https://p/index.php?x=1") == "https://p/index.php?x=1&playlist"
+    already = "https://p/index.php?v=/s2/abc&playlist"
+    assert _with_playlist(already) == already
+
+
+def test_2222_episode_uses_its_own_link_not_the_number() -> None:
+    """Серия задаётся ПУТЁМ `/s2/<ключ>`, а не параметром `?episode=N`.
+
+    Плеер молча игнорирует номер и отдаёт первую — отсюда «запуск разных
+    серий приводил к одной и той же серии».
+    """
+    from tvhost2.sources.anidub import episode_embed_url  # noqa: PLC0415
+
+    embed = "https://p/index.php?v=/s2/first"
+    episodes = [
+        {"label": "1 серия", "link": "/s2/first", "key": "a"},
+        {"label": "3 серия", "link": "/s2/third", "key": "b"},
+        {"label": "4 серия", "link": "/s2/fourth", "key": "c"},
+    ]
+    url = episode_embed_url(embed, episodes, 3)
+    assert "third" in url, "не подставился путь нужной серии"
+    assert "%2Fs2%2Fthird" in url or "/s2/third" in url
+    assert "fourth" not in url
+    # Номера, которого нет в списке, — оставляем адрес как есть.
+    assert episode_embed_url(embed, episodes, 99) == embed
+
+
+def test_2222_anidub_resolve_passes_playlist_and_link() -> None:
+    import inspect  # noqa: PLC0415
+
+    from tvhost2.sources import anidub  # noqa: PLC0415
+
+    source = inspect.getsource(anidub.AnidubSource.resolve)
+    assert "_with_playlist(embed)" in source
+    assert "episode_embed_url(embed, episodes, wanted)" in source

@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -172,6 +173,10 @@ class Panel(QWidget):
         """Развёрнуто ли изображение. Кнопка тоже переключает, а не только
         разворачивает: раньше она всегда слала `fullscreen=True`."""
         self._error_shown = False
+        self._status_hold_until = 0.0
+        """До какого времени держим сообщение в строке статуса."""
+        self._status_hold_text = ""
+        """Что именно держим — опрос ставит это же, а не своё «играет»."""
         self._hint_text = ""
         self._tabs_built = False
 
@@ -990,6 +995,9 @@ class Panel(QWidget):
             try:
                 result = self.api.episode(self.sid, number)
             except ApiError as exc:
+                # Снимаем флаг и здесь: иначе одна сетевая осечка делает
+                # выбор серии неподвижным до перезапуска окна.
+                self._episode_busy = False
                 self.error_text.emit(str(exc), "Проверьте, что прокси запущен")
                 return
             if not result.accepted:
@@ -1092,13 +1100,28 @@ class Panel(QWidget):
             try:
                 result = self.api.translation(self.sid, index)
             except ApiError as exc:
+                # Флаг СНИМАЕМ при любом исходе. Иначе один-единственный
+                # отказ («нет такой озвучки») оставлял `_translation_busy`
+                # взведённым навсегда, и дальше не работала НИ ОДНА озвучка:
+                # в журнале заказчика ровно это — одна ошибка, и после неё
+                # пульт молчит сколько ни жми.
+                self._translation_busy = False
                 self.error_text.emit(str(exc), "Проверьте, что прокси запущен")
                 return
             if not result.accepted:
+                self._translation_busy = False
                 diag_log("err", f"озвучка {index} не переключилась: {result.reason}")
                 self.error_text.emit(result.reason, result.hint)
                 return
-            self._set_remote_status("Пульт: озвучка сменилась — телевизор перезагрузит страницу")
+            # Сервер мог ответить предупреждением: просили студию, которой
+            # на этой серии нет. Тогда честно говорим, что включилось.
+            note = str((result.data or {}).get("warning") or "").strip()
+            if note:
+                self._set_remote_status(f"Пульт: {note}", sticky_ms=7000)
+            else:
+                self._set_remote_status(
+                    "Пульт: озвучка сменилась — телевизор перезагрузит страницу"
+                )
             # Плеер перезагрузит страницу сам (команда ниже), но опрос
             # состояния успел бы вернуть прежний список — держим паузу.
             self._cmd("reload", 1)
@@ -1191,6 +1214,12 @@ class Panel(QWidget):
             self._muted = bool(state.get("muted"))
             self._paint_mute()
         playing = bool(state.get("playing"))
+        # Держим ответ на действие несколько секунд: иначе опрос затирает
+        # его быстрее, чем человек дочитывает.
+        if time.monotonic() < self._status_hold_until:
+            self.remote_status.setText(self._status_hold_text)
+            self.btn_play.setIcon(theme.icon("pause" if playing else "play", 22))
+            return
         self._set_remote_status(
             "Пульт: " + _episode_mark(state) + f"{'играет' if playing else 'пауза'}  "
             f"{_mmss(position)} / {_mmss(duration)}"
@@ -1523,7 +1552,7 @@ class Panel(QWidget):
             hint = "У этого видео нет дорожек субтитров"
             if self.translation_box.count() > 0:
                 hint += " — ищите их в списке озвучек"
-            self._set_remote_status(hint)
+            self._set_remote_status(hint, sticky_ms=6000)
             return
         self.subs_index = (self.subs_index + 1) % (count + 1)
         self._cmd("subs", self.subs_index)
@@ -1531,10 +1560,10 @@ class Panel(QWidget):
         # сработало нажатие или нет — на пульте нет своего индикатора.
         self._mark_subs_button()
         if self.subs_index == 0:
-            self._set_remote_status("Субтитры выключены")
+            self._set_remote_status("Субтитры выключены", sticky_ms=4000)
         else:
             name = self._subtitle_titles[self.subs_index - 1]
-            self._set_remote_status(f"Субтитры: {name}")
+            self._set_remote_status(f"Субтитры: {name}", sticky_ms=4000)
 
     def _mark_subs_button(self) -> None:
         """Подсветить кнопку субтитров, когда дорожка включена."""
@@ -1555,15 +1584,26 @@ class Panel(QWidget):
         """
         self._set_remote_status(text, force=True)
 
-    def _set_remote_status(self, text: str, force: bool = False) -> None:
+    def _set_remote_status(
+        self, text: str, force: bool = False, sticky_ms: int = 0
+    ) -> None:
         """Строка статуса. Пока висит отказ, обычные сообщения не затирают его.
 
         `force=True` — для самого отказа и для явной очистки: иначе статус
         нельзя было бы сменить вообще.
+
+        `sticky_ms` — сколько держать сообщение, не давая опросу его
+        переписать. Жалоба «уведомление про субтитры быстро исчезает»: опрос
+        идёт каждые 800 мс и тут же ставил обратно «играет 0:00 / 0:00»,
+        человек не успевал прочитать. Обычные сообщения по-прежнему
+        сменяются свободно — прилипают только ответы на действия.
         """
         if self._error_shown and not force:
             return
         self.remote_status.setText(text)
+        if sticky_ms > 0:
+            self._status_hold_until = time.monotonic() + sticky_ms / 1000.0
+            self._status_hold_text = text
 
     def _badge(self, state: str) -> None:
         self.badge.setProperty("state", state)

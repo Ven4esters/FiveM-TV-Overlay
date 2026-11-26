@@ -42,7 +42,7 @@ from ..sources import register_all
 from . import hls as hls_bridge
 from . import player as player_page
 from . import resolver
-from .fetch import FetchError, fetch
+from .fetch import FetchError, fetch, headers_for
 from .history import HISTORY
 from .session import SessionStore
 
@@ -53,6 +53,9 @@ STATIC_DIR = resources.resource("web", "static")
 HLS_JS_NAME = "hls.min.js"
 MAX_COMMANDS = 200
 HTTP_PARTIAL = 206
+
+SOURCE_TIMEOUT_S = 120
+"""Сколько ждём источник. У anidub.com один сегмент идёт до 22 секунд."""
 """Частичный ответ: столько отдаём при перемотке (Range)."""
 """Предел очереди команд: если плеер не отвечает час, очередь не растёт."""
 
@@ -226,6 +229,38 @@ def _keep_translation(session: Any, url: str, number: int, resolved: Any) -> Any
     return resolved
 
 
+def _looks_like_playlist(url: str) -> bool:
+    """Сегмент это или плейлист — по адресу, без скачивания.
+
+    Плейлист m3u8 надо переписать: его сегменты ведут на CDN, и браузер не
+    должен ходить туда напрямую. Сегмент достаточно отдать как есть.
+
+    Скачивать весь сегмент ради проверки нельзя: у anidub.com один сегмент
+    идёт 22 секунды, и именно из-за этого плеер сдавался (см. `_send_stream`).
+    Поэтому смотрим на адрес: `.m3u8`/`manifest` — плейлист, `file://` —
+    локальная склейка ffmpeg (тоже плейлист), остальное — сегмент.
+    """
+    parts = urllib.parse.urlsplit(url)
+    if parts.scheme == "file":
+        return True
+    path = parts.path.lower()
+    if path.endswith((".m3u8", ".m3u")):
+        return True
+    return "m3u8" in parts.query.lower() or "manifest" in parts.query.lower()
+
+
+def _open_source(target: str, headers: dict[str, str]):
+    """Открыть поток источника для потоковой отдачи.
+
+    Отдельная функция, а не `fetch`: `fetch` читает ВЕСЬ ответ в память —
+    для плейлиста это правильно, для сегмента смерти подобно (см.
+    `_send_stream`). Таймаут на чтение — по умолчанию у urllib он общий.
+    """
+    safe_url = urllib.parse.quote(target, safe=":/?&=#%+@!$'()*,;[]~")
+    request = urllib.request.Request(safe_url, headers=headers_for(target, headers))
+    return urllib.request.urlopen(request, timeout=SOURCE_TIMEOUT_S)
+
+
 class OverlayHandler(BaseHTTPRequestHandler):
     """Обработчик запросов игры и оверлея.
 
@@ -293,6 +328,49 @@ class OverlayHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     # ---------------- утилиты ответов ----------------
+    def _send_stream(
+        self,
+        target: str,
+        headers: dict[str, str],
+        ctype: str,
+        cache_key: str = "",
+    ) -> None:
+        """Отдать сегмент ПО МЕРЕ скачивания, а не после.
+
+        Зачем: сегмент anidub.com (3 МБ) отдаётся источником **22 секунды**,
+        и пока мы копили его в память целиком, клиент успевал сдаться по
+        своему таймауту. Отсюда `fragLoadError HTTP 502` и «серия не
+        запускается»: hls.js считал сегмент битым, повторял запрос, забивал
+        канал — и следующие серии получали ту же ошибку.
+
+        Теперь байты идут сразу, как приходят: браузер начинает разбор
+        первого куска, не дожидаясь конца файла.
+        """
+        try:
+            with _open_source(target, headers) as response:
+                size = response.headers.get("Content-Length")
+                self.send_response(200)
+                self.send_header("Content-Type", ctype)
+                if size:
+                    self.send_header("Content-Length", size)
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Accept-Ranges", "bytes")
+                self.end_headers()
+                collected = bytearray()
+                while True:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    if self.command != "HEAD":
+                        self.wfile.write(chunk)
+                    if cache_key and len(collected) < 32 * 1024 * 1024:
+                        collected.extend(chunk)
+                if cache_key and collected and size:
+                    STATE.segments.put(cache_key, bytes(collected), ctype)
+        except Exception as exc:  # обрыв на полпути — это норма, не сбой
+            log.debug("потоковая отдача прервалась: %s", exc)
+
     def _send(
         self,
         status: int,
@@ -323,8 +401,20 @@ class OverlayHandler(BaseHTTPRequestHandler):
         self._send(status, body, "application/json; charset=utf-8")
 
     def _playlist(self, body: bytes, status: int = 200) -> None:
-        """Плейлист отдаём с CORS и без кеша: токены CDN меняются."""
-        self._send(status, body, "application/vnd.apple.mpegurl")
+        """Плейлист отдаём с CORS и без кеша: токены CDN меняются.
+
+        `no-store` в `_send` уже стоит, но CEF в игре его иногда игнорирует
+        и берёт ответ из памяти — тогда после смены серии играет прежняя
+        (жалоба «разные серии приводят к одной»). Добавляем то, что старые
+        движки понимают без оговорок.
+        """
+        self._send(
+            status,
+            body,
+            "application/vnd.apple.mpegurl",
+            cache="no-store, no-cache, must-revalidate, max-age=0",
+            extra={"Pragma": "no-cache", "Expires": "0"},
+        )
 
     def _error_playlist(self, reason: str, status: int = 502) -> None:
         """Сбой источника — валидным плейлистом с причиной (ERR-081)."""
@@ -720,10 +810,18 @@ class OverlayHandler(BaseHTTPRequestHandler):
         except resolver.ResolveError as exc:
             return self._json(200, {"ok": False, "reason": exc.message})
         session.stream = resolved.stream
-        # Название могло смениться (у источника порядок другой) — держим в
-        # сессии то, что реально включилось, чтобы следующая серия
-        # открывалась той же студией.
-        session.translation_wanted = wanted_title
+        # Что РЕАЛЬНО включилось после разбора.
+        got_title = _track_title(session.stream, session.translation_index)
+        session.translation_wanted = got_title or wanted_title
+        # Если человек просил студию, а её на этой серии нет — говорим прямо.
+        # Раньше сервер молча оставлял чужую озвучку, а пульт показывал
+        # «нет такой озвучки» без объяснений: человек не понимал, что дело
+        # не в сбое, а в том, что на этой серии такой студии просто нет.
+        missing = ""
+        if wanted_title and got_title and got_title != wanted_title:
+            missing = (
+                f"на этой серии нет озвучки «{wanted_title}» — включена «{got_title}»"
+            )
         STATE.runtime_for(sid).commands.clear()
         # Озвучка — часть просмотра: «Ван-Пис в дубляже» и «в субтитрах»
         # это разные записи, к каждой хочется вернуться своей.
@@ -736,7 +834,12 @@ class OverlayHandler(BaseHTTPRequestHandler):
         )
         return self._json(
             200,
-            {"ok": True, "translation": session.translation_title, "sid": session.sid},
+            {
+                "ok": True,
+                "translation": session.translation_title,
+                "warning": missing,
+                "sid": session.sid,
+            },
         )
 
     def _episode(self, sid: str, query: dict[str, list[str]]) -> None:
@@ -866,7 +969,29 @@ class OverlayHandler(BaseHTTPRequestHandler):
                 return dict(stream.headers)
         return {}
 
-    def _bridge(self, query: dict[str, list[str]]) -> None:
+    def _from_cache(self, cache_key: str, wanted: str) -> bool:
+        """Отдать кусок из памяти, если он там есть. True — уже отдали.
+
+        Вынесено из `_bridge` отдельным методом: у моста и без того шесть
+        развилок, и каждая новая делает его нечитаемым.
+        """
+        cached = STATE.segments.get(cache_key)
+        if cached is None:
+            return False
+        body, ctype, extra_raw = cached
+        extra = {"Content-Range": extra_raw} if extra_raw else None
+        self._send(
+            HTTP_PARTIAL if wanted else 200,
+            body,
+            ctype,
+            cache="no-store",
+            extra=extra,
+        )
+        return True
+
+    def _bridge(  # noqa: PLR0911 — плоский список развилок читается лучше
+        self, query: dict[str, list[str]]
+    ) -> None:
         """Универсальный мост: плейлист или сегмент источника.
 
         Заголовки берутся из ДВУХ мест: `_referer_headers` знает про домены
@@ -878,7 +1003,8 @@ class OverlayHandler(BaseHTTPRequestHandler):
         """
         target = (query.get("url") or [""])[0]
         if not target:
-            return self._error_playlist("нужен параметр url", 400)
+            self._error_playlist("нужен параметр url", 400)
+            return None
         headers = _referer_headers(target)
         headers.update(self._stream_headers(target))
         # Перемотка. Браузер просит кусок файла заголовком `Range`, и этот
@@ -890,17 +1016,16 @@ class OverlayHandler(BaseHTTPRequestHandler):
         # прийти медленнее, чем ждёт hls.js (`fragLoadTimeOut`), и плеер
         # повторит адрес слово в слово; второй раз обязан быть мгновенным.
         cache_key = f"{target}|{wanted}"
-        cached = STATE.segments.get(cache_key)
-        if cached is not None:
-            body, ctype, extra_raw = cached
-            extra = {"Content-Range": extra_raw} if extra_raw else None
-            return self._send(
-                HTTP_PARTIAL if wanted else 200,
-                body,
-                ctype,
-                cache="no-store",
-                extra=extra,
-            )
+        if self._from_cache(cache_key, wanted):
+            return None
+        # СЕГМЕНТ — отдаём потоком, ещё до того как он скачался целиком.
+        # Замерено 26.11.2026 на anidub.com: сегмент 3 МБ приходит 22 с.
+        # Пока он копился в память, hls.js сдавался и просил заново, а
+        # повтор лез в тот же медленный канал — отсюда `fragLoadError
+        # HTTP 502` и «серия не запускается». Плейлисты по-прежнему идут
+        # через fetch: их надо переписать.
+        if not _looks_like_playlist(target):
+            return self._send_stream(target, headers, "video/mp2t", cache_key)
         try:
             # file:// — склейка ffmpeg (видео+звук): отдаём плейлист и сегменты
             # с диска тем же путём, что и сетевые. Отдельной ветки не нужно:
@@ -908,7 +1033,7 @@ class OverlayHandler(BaseHTTPRequestHandler):
             response = fetch(
                 target,
                 headers,
-                max_bytes=None if wanted else 8 * 1024 * 1024,
+                max_bytes=8 * 1024 * 1024,
                 range_header=wanted,
             )
         except FetchError as exc:
@@ -947,12 +1072,34 @@ class OverlayHandler(BaseHTTPRequestHandler):
             if cached is None:
                 ffmpeg_exe = _ffmpeg_exe()
                 if ffmpeg_exe is None:
+                    # Не «замер не удался», а конкретно: нет инструмента, и
+                    # вот что с этим делать. Раньше обе причины сливались в
+                    # одно «Замер не удался», и человек не знал, чинить ему
+                    # поток, сеть или что-то ещё.
                     return self._json(
-                        200, {"gainDb": None, "note": "ffmpeg не найден — замер невозможен"}
+                        200,
+                        {
+                            "gainDb": None,
+                            "note": "нужен ffmpeg",
+                            "fix": (
+                                "Положите ffmpeg.exe рядом с программой (в папку bin) "
+                                "или установите: winget install ffmpeg"
+                            ),
+                        },
                     )
                 value = loudness.measure(url, ffmpeg_exe, _measure_headers(session, url))
                 if value is None:
-                    return self._json(200, {"gainDb": None, "note": "замер не удался"})
+                    return self._json(
+                        200,
+                        {
+                            "gainDb": None,
+                            "note": "замер не удался",
+                            "fix": (
+                                "Источник отдал поток, который ffmpeg не смог прочитать. "
+                                "Нормализация необязательна — звук играет и без неё"
+                            ),
+                        },
+                    )
                 STATE.loudness.put(url, value)
                 cached = value
         return self._json(200, cached.as_dict())

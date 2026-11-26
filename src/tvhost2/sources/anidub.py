@@ -102,6 +102,43 @@ def stream_path(html: str) -> str:
     return match.group(1).strip().replace("&amp;", "&") if match else ""
 
 
+def _with_playlist(embed: str) -> str:
+    """Адрес плеера с `&playlist` — только с ним он отдаёт список серий.
+
+    Без параметра плеер отвечает `"hasSeries":false,"episodes":[]` и играет
+    то, что записано в пути (`/s2/<ключ первой серии>`). Отсюда жалоба
+    «запуск разных серий приводил к одной и той же серии»: путь не менялся,
+    и все серии открывали первую.
+    """
+    if "playlist" in embed:
+        return embed
+    return embed + ("&" if "?" in embed else "?") + "playlist"
+
+
+def episode_embed_url(embed: str, episodes: list[dict[str, str]], number: int) -> str:
+    """Адрес плеера ДЛЯ КОНКРЕТНОЙ серии — по её собственному `link`.
+
+    У этого плеера серия задаётся ПУТЁМ `/s2/<ключ>`, а не параметром
+    `?episode=N` (его он молча игнорирует и отдаёт первую). Поэтому берём
+    `link` нужной записи и подставляем в `v=` адреса плеера.
+    """
+    parts = urllib.parse.urlsplit(embed)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    link = ""
+    for item in episodes:
+        if episode_number(item.get("label", "")) == number:
+            link = str(item.get("link") or "")
+            break
+    if not link:
+        return embed
+    replaced = [(k, link if k == "v" else v) for k, v in query]
+    if not any(k == "v" for k, _ in query):
+        replaced.append(("v", link))
+    return urllib.parse.urlunsplit(
+        (parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(replaced), parts.fragment)
+    )
+
+
 def playlist_episodes(html: str) -> list[dict[str, str]]:
     """Серии из плейлиста плеера (`ladonyvesna…`): подпись, ссылка, ключ.
 
@@ -275,7 +312,11 @@ class AnidubSource:
             )
 
         try:
-            player = fetch(embed).text()
+            # `&playlist` ОБЯЗАТЕЛЕН: без него плеер отдаёт `"episodes":[]`,
+            # то есть знает только серию, указанную в пути. Проверено
+            # 26.11.2026: с параметром приходит полный список из 157 записей,
+            # у каждой свой `link` (`/s2/90ccd3…`) и `key`.
+            player = fetch(_with_playlist(embed)).text()
         except FetchError as exc:
             raise SourceFailedError(
                 self.name,
@@ -318,7 +359,7 @@ class AnidubSource:
             episodes = []
             current_episode = 0
         if episodes and current_episode > 0 and wanted > 0:
-            player = pick_episode_url(embed, episodes, wanted)
+            player = episode_embed_url(embed, episodes, wanted)
             try:
                 player = fetch(player).text()
             except FetchError as exc:

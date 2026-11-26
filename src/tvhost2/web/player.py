@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import html
 import json
+import time
 import urllib.parse
 
 from .session import Session
@@ -194,6 +195,9 @@ SCRIPT = """
   var toastEl = document.getElementById("toast");
   var errEl = document.getElementById("err");
 
+  // Версия потока: новая на каждую отрисовку страницы. Нужна, чтобы CEF
+  // не отдал из кэша мастер ПРЕЖНЕЙ серии по тому же адресу /stream/<sid>.
+  var STREAM_VERSION = "__STREAM_VERSION__";
   var lastSeq = 0;
   var unmuteOnClick = false;
   var hls = null;
@@ -386,7 +390,11 @@ SCRIPT = """
       if (LIVE) bar.classList.add("live");
       return;
     }
-    var src = BASE + "/stream/" + SID;
+    // «Версия» в адресе потока. Страница в CEF кэширует ответы, а адрес
+    // /stream/<sid> одинаков для ВСЕХ серий — после смены серии браузер мог
+    // отдать мастер из кэша ипродолжать играть прежнюю. Своя версия на каждую
+    // отрисовку страницы гарантирует свежий запрос.
+    var src = BASE + "/stream/" + SID + "?v=" + STREAM_VERSION;
     if (window.Hls && window.Hls.isSupported()) {
       hls = new window.Hls({
         // Стартуем с лучшего качества, дальше ABR решает сам.
@@ -521,7 +529,17 @@ SCRIPT = """
       // плеере: страница обязана перечитать её. Раньше перезагрузку делала
       // только смена озвучки (`pickTranslation`), а после смены серии
       // страница продолжала играть старую — жалоба «серии не переключаются».
-      case "reload":     setTimeout(function () { location.reload(); }, 300); break;
+      case "reload":
+        // Не только `location.reload()`: в CEF страница может перезагрузиться
+        // и взять прежний поток из кэша — тогда «серия сменилась», а играет
+        // старая. Показываем, что идёт работа, и перезагружаем жёстко.
+        toast("Открываю серию…");
+        setTimeout(function () {
+          try {
+            location.reload();
+          } catch (e) {}
+        }, 300);
+        break;
       case "fullscreen":
         // Ровно то же, что делает кнопка в самом плеере (`actFull`):
         // Fullscreen API в CEF игры обычно не работает, поэтому «во весь
@@ -881,6 +899,7 @@ def render(session: Session, base: str, hls_js_url: str) -> str:
         .replace("__FWD__", str(SKIP_FWD_S))
         .replace("__START_VOL__", f"{START_VOLUME:.2f}")
         .replace("__START_VOL_PCT__", str(round(START_VOLUME * 100)))
+        .replace("__STREAM_VERSION__", str(int(time.time() * 1000)))
     )
     styles = BASE_CSS.replace("</", "<\\/")  # безопасность: не закрыть тег внутри
     markup = f"""<!doctype html>
